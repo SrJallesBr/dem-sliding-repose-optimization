@@ -20,7 +20,7 @@ class ArchingControllerDiagnosticTests(unittest.TestCase):
             ratio = 0.125 / 0.00325
             for offset in (0.0, 0.1, -0.1):
                 center = offset * ratio
-                for index in range(7):
+                for index in range(10):
                     y = (index + 0.5) * 0.2
                     distance = 1.0 + index * 0.2
                     points.extend(((center, y, -distance), (center, y, distance)))

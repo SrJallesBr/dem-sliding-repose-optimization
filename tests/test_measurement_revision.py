@@ -66,6 +66,20 @@ class MeasurementRevisionTests(unittest.TestCase):
             self.assertEqual(len(section["right_selected_particle_centers"]), len(section["right_fit_points"]))
         self.assertAlmostEqual(result["mean_angle_deg"], 37.5, delta=1.0)
 
+    def test_discharge_applies_repose_minimum_height_and_preserves_two_piece_fits(self):
+        points, radii = self._three_cut_cloud_with_reversal()
+        result = measure_v_sliding_angle_three_cuts(
+            points, radii, horizontal_axis="z",
+            mesh_bounds={"x": (-5.0, 5.0), "z": (-5.0, 5.0)}, nbrratio=20.0,
+        )
+        self.assertEqual(result["minimum_height_particle_diameters"], 2.0)
+        for section in result["sections"]:
+            for side in ("left", "right"):
+                self.assertAlmostEqual(section[f"profile_start_height_{side}"], 0.09)
+                self.assertTrue(all(y >= section[f"profile_start_height_{side}"] for _, y in section[f"{side}_selected_particle_centers"]))
+                self.assertEqual(section[f"{side}_segment_count"], 2)
+                self.assertEqual(len(section[f"{side}_segments"]), 2)
+
     def test_discharge_sustained_reversal_reports_two_segment_angles_and_scalar(self):
         points, radii = self._three_cut_cloud_with_reversal()
         result = measure_v_sliding_angle_three_cuts(
@@ -78,7 +92,7 @@ class MeasurementRevisionTests(unittest.TestCase):
             for side, expected in (("left", (30.0, 45.0)), ("right", (30.0, 45.0))):
                 segments = section[f"{side}_segments"]
                 self.assertEqual(len(segments), 2)
-                self.assertEqual([item["fit_support"] for item in segments], [8, 5])
+                self.assertEqual([item["fit_support"] for item in segments], [6, 5])
                 for segment, angle in zip(segments, expected):
                     self.assertAlmostEqual(segment["angle_deg"], angle, delta=1.5)
         self.assertAlmostEqual(result["sections"][0]["mean_angle_deg"], 37.5, delta=1.5)
@@ -89,6 +103,9 @@ class MeasurementRevisionTests(unittest.TestCase):
         self.assertIn("discharge_x0_right_segment2_support", RESULT_FIELDS)
         self.assertAlmostEqual(csv_fields["discharge_x0_left_segment1_deg"], result["sections"][0]["left_segments"][0]["angle_deg"])
         self.assertEqual(csv_fields["discharge_x0_left_segment2_support"], 5)
+        self.assertEqual(csv_fields["discharge_x0_minimum_height_particle_diameters"], 2.0)
+        self.assertEqual(csv_fields["discharge_x0_left_profile_start_height_m"], 0.09)
+        self.assertIn("discharge_x0_left_profile_start_height_m", RESULT_FIELDS)
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "two-segment.svg"
             write_discharge_svg(output, points, result, "trial", "nbrratio=20")
@@ -152,6 +169,8 @@ class MeasurementRevisionTests(unittest.TestCase):
             svg = output.read_text(encoding="utf-8")
         self.assertIn("BANDA EFETIVA", svg)
         self.assertIn("CLIPADA PELA MALHA", svg)
+        self.assertEqual(svg.count('data-kind="minimum-height-cutoff"'), 6)
+        self.assertIn("CORTE MINIMO", svg)
 
     def test_clipped_discharge_band_excludes_particles_beyond_scaled_mesh_bounds(self):
         points, radii = self._three_cut_cloud()
@@ -180,7 +199,7 @@ class MeasurementRevisionTests(unittest.TestCase):
             output = Path(temp_dir) / "clipped-effective-bands.svg"
             write_discharge_svg(output, contaminated_points, actual, "trial", "nbrratio=20")
             svg = output.read_text(encoding="utf-8")
-        self.assertEqual(svg.count('data-kind="particle"'), 72)
+        self.assertEqual(svg.count('data-kind="particle"'), 60)
 
     def test_repose_selection_uses_outer_face_not_nearest_centerline_particle(self):
         points = []
@@ -366,8 +385,11 @@ class MeasurementRevisionTests(unittest.TestCase):
         self.assertIn("X=+0.000 M", svg)
         self.assertIn("X=+0.100 M", svg)
         fit_colors = {"#d93535", "#276bd2"}
-        fit_lines = [el for el in root.iter() if el.tag.endswith("line") and el.attrib.get("stroke") in fit_colors]
+        fit_lines = [el for el in root.iter() if el.tag.endswith("line") and el.attrib.get("data-kind", "").startswith("fit-") and el.attrib.get("stroke") in fit_colors]
         self.assertEqual(len(fit_lines), 6)
+        cutoff_lines = [el for el in root.iter() if el.attrib.get("data-kind") == "minimum-height-cutoff"]
+        self.assertEqual(len(cutoff_lines), 6)
+        self.assertIn("CORTE MINIMO", svg)
         ordered_nodes = list(root.iter())
         selected_index = next(index for index, el in enumerate(ordered_nodes) if el.attrib.get("data-kind") == "selected")
         outlier_index = next(index for index, el in enumerate(ordered_nodes) if el.attrib.get("data-kind") == "outlier")

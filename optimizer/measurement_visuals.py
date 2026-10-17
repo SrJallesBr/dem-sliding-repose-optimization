@@ -138,7 +138,7 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
         '<rect width="100%" height="100%" fill="#f7f9fc"/>',
         f'<text x="48" y="52" fill="{navy}" font-family="monospace" font-size="34" font-weight="bold">{html.escape(title)} - DESCARGA / DESLIZAMENTO</text>',
         f'<text x="48" y="88" fill="{navy}" font-family="monospace" font-size="17">3 CORTES FISICOS: {html.escape(cuts_label)} | MEIA-LARGURA={half_width_physical:.3f} M | CONVERSAO PELA NBRRATIO</text>',
-        f'<text x="48" y="118" fill="{navy}" font-family="monospace" font-size="15">{axis} HORIZONTAL | Y VERTICAL | ESCALA VISUAL X/Y IGUAL | CINZA: PARTICULAS DA SECAO</text>',
+        f'<text x="48" y="118" fill="{navy}" font-family="monospace" font-size="15">{axis} HORIZONTAL | Y VERTICAL | ESCALA VISUAL X/Y IGUAL | LINHAS TRACEJADAS: CORTE MINIMO; PONTOS ABAIXO OCULTOS NO AJUSTE</text>',
     ]
     panel_w, panel_h, gap_x, margin_x, top = 560, 750, 24, 36, 150
     for section_index, section_result in enumerate(result["sections"]):
@@ -147,17 +147,27 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
         half_width = float(section_result["section_half_width"])
         section_bounds = section_result.get("section_normal_bounds_sim")
         if section_bounds is None:
-            cloud = [(float(p[hi]), float(p[1])) for p in points if abs(float(p[ni]) - section_center) <= half_width]
+            normal_low, normal_high = section_center - half_width, section_center + half_width
         else:
             normal_low, normal_high = map(float, section_bounds)
-            cloud = [(float(p[hi]), float(p[1])) for p in points if normal_low <= float(p[ni]) <= normal_high]
-        if not cloud:
+        all_cloud = [(float(p[hi]), float(p[1])) for p in points if normal_low <= float(p[ni]) <= normal_high]
+        if not all_cloud:
             raise ValueError(f"no particles in discharge cut centered at {section_center}")
+        centerline = float(section_result["centerline"])
+        cutoff_values = {
+            "left": float(section_result["profile_start_height_left"]),
+            "right": float(section_result["profile_start_height_right"]),
+        }
+        cloud = [
+            (x, y) for x, y in all_cloud
+            if y >= cutoff_values["left" if x < centerline else "right"]
+        ]
+        hidden_count = len(all_cloud) - len(cloud)
         xmin, xmax = min(x for x, _ in cloud), max(x for x, _ in cloud)
         ymin, ymax = min(y for _, y in cloud), max(y for _, y in cloud)
         padx, pady = max((xmax - xmin) * .08, 1e-9), max((ymax - ymin) * .08, 1e-9)
         xmin, xmax, ymin, ymax = xmin - padx, xmax + padx, ymin - pady, ymax + pady
-        left, plot_top, plot_w, plot_h = px + 34, top + 82, panel_w - 68, panel_h - 170
+        left, plot_top, plot_w, plot_h = px + 34, top + 112, panel_w - 68, panel_h - 200
         scale = min(plot_w / (xmax - xmin), plot_h / (ymax - ymin))
         actual_w, actual_h = (xmax - xmin) * scale, (ymax - ymin) * scale
         off_x, off_y = (plot_w - actual_w) / 2.0, (plot_h - actual_h) / 2.0
@@ -175,7 +185,16 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
         out.append(f'<text x="{px+14}" y="{top+72}" fill="{orange if clip_label else navy}" font-family="monospace" font-size="12">BANDA EFETIVA [{float(effective_band_physical[0]):+.3f},{float(effective_band_physical[1]):+.3f}] M{clip_label}</text>')
         out.append(f'<rect x="{left}" y="{plot_top}" width="{plot_w}" height="{plot_h}" fill="#f8fafc" stroke="{navy}" stroke-width="1.5"/>')
         for x, y in cloud:
-            out.append(f'<circle data-kind="particle" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="2.2" fill="#7d8da1" fill-opacity=".68"/>')
+            side = "left" if x < centerline else "right"
+            cutoff_y = cutoff_values[side]
+            out.append(f'<circle data-kind="particle" data-particle-y="{y:.9f}" data-cutoff-y="{cutoff_y:.9f}" data-side="{side}" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="2.2" fill="#7d8da1" fill-opacity=".68"/>')
+        for side, color, is_left in (("left", red, True), ("right", blue, False)):
+            cutoff_y = cutoff_values[side]
+            side_x = [x for x, _ in all_cloud if (x < centerline) == is_left]
+            if side_x:
+                endpoint = min(side_x) if is_left else max(side_x)
+                out.append(f'<line data-kind="minimum-height-cutoff" data-cutoff-side="{side}" data-cutoff-y="{cutoff_y:.9f}" x1="{X(centerline):.2f}" y1="{Y(cutoff_y):.2f}" x2="{X(endpoint):.2f}" y2="{Y(cutoff_y):.2f}" stroke="{color}" stroke-width="3" stroke-dasharray="8 5"/>')
+        out.append(f'<text data-kind="minimum-height-label" x="{px+14}" y="{top+92}" fill="{orange}" font-family="monospace" font-size="12" font-weight="bold">CORTE MINIMO ESQ Y={cutoff_values["left"]:.4f} | DIR Y={cutoff_values["right"]:.4f} M | OCULTAS={hidden_count}</text>')
         for side, color in (("left", red), ("right", blue)):
             fit_points = section_result[f"{side}_fit_points"]
             bx, by = section_result[f"base_{side}"]
@@ -213,6 +232,7 @@ def write_discharge_failure_svg(
     path: Path, points, trial_label: str, reason: str, *,
     horizontal_axis: str, nbrratio: float, mesh_bounds=None,
     physical_centers=(-0.1, 0.0, 0.1), physical_half_width=0.075,
+    particle_radii=None, minimum_height_particle_diameters=2.0,
 ) -> None:
     """Render the standard three physical cuts when a discharge angle is invalid.
 
@@ -226,6 +246,11 @@ def write_discharge_failure_svg(
     normal_axis = "z" if horizontal_axis == "x" else "x"
     ratio = float(nbrratio)
     normal_bounds = (mesh_bounds or {}).get(normal_axis)
+    horizontal_bounds = (mesh_bounds or {}).get(horizontal_axis, (0.0, 0.0))
+    centerline = (float(horizontal_bounds[0]) + float(horizontal_bounds[1])) / 2.0
+    minimum_height_particle_diameters = float(minimum_height_particle_diameters)
+    if not math.isfinite(minimum_height_particle_diameters) or minimum_height_particle_diameters < 0:
+        raise ValueError("minimum_height_particle_diameters must be finite and nonnegative")
     title = re.sub(r"^TRIAL[_-]", "TRIAL ", trial_label.upper())
     cuts_label = ", ".join(f"X={float(center):+.1f} M" for center in physical_centers)
     out = [
@@ -234,7 +259,7 @@ def write_discharge_failure_svg(
         f'<text x="48" y="52" fill="{navy}" font-family="monospace" font-size="34" font-weight="bold">{html.escape(title)} - DESCARGA / DESLIZAMENTO</text>',
         f'<text x="48" y="88" fill="{orange}" font-family="monospace" font-size="20" font-weight="bold">NO VALID ANGLE — {html.escape(reason)}</text>',
         f'<text x="48" y="118" fill="{navy}" font-family="monospace" font-size="15">3 CORTES FISICOS: {html.escape(cuts_label)} | MEIA-LARGURA={float(physical_half_width):.3f} M | SEM AJUSTE / SEM ESCALAR</text>',
-        f'<text x="48" y="140" fill="{navy}" font-family="monospace" font-size="14">{horizontal_axis.upper()} HORIZONTAL | Y VERTICAL | ESCALA X/Y IGUAL | NUVEM REAL DO DUMP</text>',
+        f'<text x="48" y="140" fill="{navy}" font-family="monospace" font-size="14">{horizontal_axis.upper()} HORIZONTAL | Y VERTICAL | ESCALA X/Y IGUAL | 2 DIAMETROS ACIMA DA BASE: LIMITE INFERIOR DO AJUSTE (QUANDO RAIO DISPONIVEL)</text>',
     ]
     panel_w, panel_h, gap_x, margin_x, top = 560, 750, 24, 36, 160
     for index, physical_center in enumerate(physical_centers):
@@ -243,11 +268,34 @@ def write_discharge_failure_svg(
         half = float(physical_half_width) * ratio
         requested = (center - half, center + half)
         effective = requested if normal_bounds is None else (max(requested[0], float(normal_bounds[0])), min(requested[1], float(normal_bounds[1])))
-        cloud = [(float(p[hi]), float(p[1])) for p in points if effective[0] <= float(p[ni]) <= effective[1]]
+        section_indices = [
+            point_index for point_index, point in enumerate(points)
+            if effective[0] <= float(point[ni]) <= effective[1]
+        ]
+        all_cloud = [(float(points[i][hi]), float(points[i][1])) for i in section_indices]
+        section_radii = (
+            [float(particle_radii[i]) for i in section_indices]
+            if particle_radii is not None and len(particle_radii) == len(points) else []
+        )
+        cutoff_values = {}
+        hidden_count = 0
+        if section_radii and len(section_radii) == len(all_cloud):
+            median_radius = statistics.median(section_radii)
+            for side, is_left in (("left", True), ("right", False)):
+                side_points = [(x, y) for x, y in all_cloud if (x < centerline) == is_left]
+                if side_points:
+                    cutoff_values[side] = min(y for _, y in side_points) + minimum_height_particle_diameters * 2.0 * median_radius
+            cloud = [(x, y) for x, y in all_cloud if y >= cutoff_values["left" if x < centerline else "right"]]
+            hidden_count = len(all_cloud) - len(cloud)
+        else:
+            cloud = all_cloud
         out.append(f'<rect x="{px}" y="{top}" width="{panel_w}" height="{panel_h}" rx="8" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>')
         out.append(f'<text x="{px+14}" y="{top+30}" fill="{navy}" font-family="monospace" font-size="17" font-weight="bold">CORTE X FISICO | X={float(physical_center):+.3f} M</text>')
         clipped = normal_bounds is not None and (effective != requested)
         out.append(f'<text x="{px+14}" y="{top+52}" fill="{orange if clipped else navy}" font-family="monospace" font-size="12">FAIXA DEM [{effective[0]:+.3f},{effective[1]:+.3f}] | NBRRATIO={ratio:.4g}{" | CLIPADA PELA MALHA" if clipped else ""}</text>')
+        if cutoff_values:
+            label = " | ".join(f"{side.upper()} Y={value:.4f}" for side, value in cutoff_values.items())
+            out.append(f'<text data-kind="minimum-height-label" x="{px+14}" y="{top+72}" fill="{orange}" font-family="monospace" font-size="11" font-weight="bold">CORTE MINIMO: {label} M | OCULTAS={hidden_count}</text>')
         left, plot_top, plot_w, plot_h = px+34, top+82, panel_w-68, panel_h-170
         if not cloud:
             out.append(f'<text x="{px+25}" y="{top+panel_h/2}" fill="{orange}" font-family="monospace" font-size="16">SEM PARTICULAS NESTE CORTE</text>')
@@ -264,8 +312,18 @@ def write_discharge_failure_svg(
         out.append(f'<rect x="{left}" y="{plot_top}" width="{plot_w}" height="{plot_h}" fill="#f8fafc" stroke="{navy}" stroke-width="1.5"/>')
         for x,y in cloud:
             out.append(f'<circle data-kind="particle" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="2.2" fill="#7d8da1" fill-opacity=".68"/>')
+        if cutoff_values:
+            for side, color, is_left in (("left", "#d93535", True), ("right", "#276bd2", False)):
+                cutoff_y = cutoff_values.get(side)
+                side_points = [(x, y) for x, y in all_cloud if (x < centerline) == is_left]
+                if cutoff_y is None or not side_points:
+                    continue
+                endpoint = min(x for x, _ in side_points) if is_left else max(x for x, _ in side_points)
+                out.append(f'<line data-kind="minimum-height-cutoff" data-cutoff-side="{side}" data-cutoff-y="{cutoff_y:.9f}" x1="{X(centerline):.2f}" y1="{Y(cutoff_y):.2f}" x2="{X(endpoint):.2f}" y2="{Y(cutoff_y):.2f}" stroke="{color}" stroke-width="3" stroke-dasharray="8 5"/>')
+        else:
+            out.append(f'<text data-kind="minimum-height-unavailable" x="{px+18}" y="{top+panel_h-58}" fill="{orange}" font-family="monospace" font-size="12" font-weight="bold">CORTE MINIMO INDISPONIVEL: RAIO NAO LIDO</text>')
         out.append(f'<text x="{px+18}" y="{top+panel_h-38}" fill="{orange}" font-family="monospace" font-size="15" font-weight="bold">NO VALID ANGLE / NO FIT</text>')
-        out.append(f'<text x="{px+18}" y="{top+panel_h-16}" fill="{navy}" font-family="monospace" font-size="13">{len(cloud)} PARTICULAS NO CORTE</text>')
+        out.append(f'<text x="{px+18}" y="{top+panel_h-16}" fill="{navy}" font-family="monospace" font-size="13">{len(cloud)} ABOVE CUTOFF / {hidden_count} HIDDEN</text>')
     out.extend([
         f'<text x="48" y="940" fill="{orange}" font-family="monospace" font-size="20" font-weight="bold">MEDICAO REJEITADA — SEM ANGULO VALIDO; NAO USAR COMO RESULTADO DOE</text>',
         f'<text x="48" y="970" fill="{navy}" font-family="monospace" font-size="14">MOTIVO: {html.escape(reason)} | CENTROS FISICOS: {html.escape(cuts_label)} | NBRRATIO={ratio:.8g}</text>',

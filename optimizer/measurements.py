@@ -592,6 +592,7 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
             raise ValueError(f"no particles on {side_name} side of centerline")
         base_height = min(y for _, y, _ in side)
         top_height = max(y for _, y, _ in side)
+        profile_start_height = base_height + minimum_height_particle_diameters * 2.0 * median_radius
         band_count = int(math.floor((top_height - base_height) / band_height)) + 1
         candidates = []
         candidate_groups = []
@@ -599,16 +600,20 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
             low = base_height + band_index * band_height
             high = low + band_height
             group = [item for item in side if low <= item[1] < high or (band_index == band_count - 1 and item[1] == high)]
-            if group:
+            eligible_group = (
+                [item for item in group if item[1] >= profile_start_height]
+                if profile_selection == "nearest_centerline" else group
+            )
+            if eligible_group:
                 # V-tests use the closest centerline point; repose uses the exposed outer face.
                 if profile_selection == "nearest_centerline":
-                    selected = min(group, key=lambda item: (abs(item[0] - centerline), abs(item[1] - (low + high) / 2)))
+                    selected = min(eligible_group, key=lambda item: (abs(item[0] - centerline), abs(item[1] - (low + high) / 2)))
                 elif side_name == "left":
-                    selected = min(group, key=lambda item: (item[0], abs(item[1] - (low + high) / 2)))
+                    selected = min(eligible_group, key=lambda item: (item[0], abs(item[1] - (low + high) / 2)))
                 else:
-                    selected = max(group, key=lambda item: (item[0], -abs(item[1] - (low + high) / 2)))
+                    selected = max(eligible_group, key=lambda item: (item[0], -abs(item[1] - (low + high) / 2)))
                 candidates.append((band_index, selected))
-                candidate_groups.append((band_index, group))
+                candidate_groups.append((band_index, eligible_group))
         if len(candidates) < min_fit_points:
             raise UnmeasurableAngle(f"insufficient height bands on {side_name} pile face")
         # Do not hard-reject a face for a large per-band horizontal change:
@@ -677,7 +682,8 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
                 )
         else:
             base_edge_axis = candidates[0][1][0]
-            profile_start_height = base_height
+            if profile_selection != "nearest_centerline":
+                profile_start_height = base_height
         kept = candidates
         surface_kept = [
             (band, z + surface_sign * radius, y, radius)
@@ -729,7 +735,7 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
             if len(falling_before) >= 2 and len(rising_after) >= 2:
                 reversal_candidates.append((min(-sum(falling_before), sum(rising_after)), turn))
         split_at = max(reversal_candidates, default=(0.0, None))[1] if profile_selection == "nearest_centerline" else None
-        piece_samples = [surface_kept] if split_at is None else [surface_kept[:split_at + 1], surface_kept[split_at:]]
+        piece_samples = [surface_kept] if split_at is None else [surface_kept[:split_at], surface_kept[split_at:]]
         if split_at is not None and any(len(piece) < min_fit_points for piece in piece_samples):
             raise UnmeasurableAngle(f"insufficient segment support on {side_name} pile face for two-piece fit")
         if split_at is None and (len(surface_kept) < min_fit_points or surface_kept[-1][0] - base_band + 1 < min_fit_points):
@@ -841,6 +847,7 @@ def measure_v_sliding_angle_three_cuts(
     nbrratio,
     physical_centers=(-0.1, 0.0, 0.1),
     physical_half_width=0.075,
+    minimum_height_particle_diameters=2.0,
 ):
     """Measure the three requested physical cut centers in NBR-scaled DEM units."""
     nbrratio = float(nbrratio)
@@ -848,6 +855,9 @@ def measure_v_sliding_angle_three_cuts(
     physical_half_width = float(physical_half_width)
     if not math.isfinite(nbrratio) or nbrratio <= 0:
         raise ValueError("nbrratio must be a finite positive value")
+    minimum_height_particle_diameters = float(minimum_height_particle_diameters)
+    if not math.isfinite(minimum_height_particle_diameters) or minimum_height_particle_diameters < 0:
+        raise ValueError("minimum_height_particle_diameters must be finite and nonnegative")
     if len(physical_centers) != 3 or len(set(physical_centers)) != 3:
         raise ValueError("three distinct physical cut centers are required")
     if any(not math.isfinite(center) for center in physical_centers):
@@ -881,6 +891,7 @@ def measure_v_sliding_angle_three_cuts(
             section_half_width=section_half_width,
             section_center=section_center,
             section_normal_bounds_sim=effective_band,
+            minimum_height_particle_diameters=minimum_height_particle_diameters,
         )
         measurement["section_center_physical"] = physical_center
         measurement["section_half_width_physical"] = physical_half_width
@@ -900,6 +911,7 @@ def measure_v_sliding_angle_three_cuts(
         "section_half_width_physical": physical_half_width,
         "nbrratio": nbrratio,
         "section_centers_physical": list(physical_centers),
+        "minimum_height_particle_diameters": minimum_height_particle_diameters,
         "left_angle_deg": left_angle,
         "right_angle_deg": right_angle,
         "mean_angle_deg": sum(item["mean_angle_deg"] for item in sections) / len(sections),

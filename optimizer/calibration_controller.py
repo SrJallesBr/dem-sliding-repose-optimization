@@ -34,7 +34,7 @@ SEED_PATTERNS = {
     "insertion": re.compile(r"(insert/stream\s+seed\s+)(\d+)", re.IGNORECASE),
 }
 STATUS_FIELDS = ("trial_id", "phase", "status", "stage", "message", "workspace", "started_at", "finished_at")
-RESULT_FIELDS = ("trial_id", "phase", "status", "sf11", "rf11", "rf12", "CED11", "distribution_seed", "insertion_seed", "discharge_deg", "discharge_left_deg", "discharge_right_deg", "discharge_asymmetry_deg", "discharge_x0_deg", "discharge_x0_left_deg", "discharge_x0_right_deg", "discharge_xplus01_deg", "discharge_xplus01_left_deg", "discharge_xplus01_right_deg", "discharge_xminus01_deg", "discharge_xminus01_left_deg", "discharge_xminus01_right_deg", "discharge_x0_center_physical_m", "discharge_x0_band_clipped", "discharge_x0_band_min_m", "discharge_x0_band_max_m", "discharge_xplus01_center_physical_m", "discharge_xplus01_band_clipped", "discharge_xplus01_band_min_m", "discharge_xplus01_band_max_m", "discharge_xminus01_center_physical_m", "discharge_xminus01_band_clipped", "discharge_xminus01_band_min_m", "discharge_xminus01_band_max_m", "repose_deg", "repose_axis0_deg", "repose_axis0_plus_deg", "repose_axis0_minus_deg", "repose_axis45_deg", "repose_axis45_plus_deg", "repose_axis45_minus_deg", "repose_axis90_deg", "repose_axis90_plus_deg", "repose_axis90_minus_deg", "repose_axis135_deg", "repose_axis135_plus_deg", "repose_axis135_minus_deg", "discharge_error", "repose_error", "score", "workspace", *(f"discharge_{cut}_{side}_segment{segment}_{field}" for cut in ("x0", "xplus01", "xminus01") for side in ("left", "right") for segment in (1, 2) for field in ("count", "deg", "support")))
+RESULT_FIELDS = ("trial_id", "phase", "status", "sf11", "rf11", "rf12", "CED11", "distribution_seed", "insertion_seed", "discharge_deg", "discharge_left_deg", "discharge_right_deg", "discharge_asymmetry_deg", "discharge_x0_deg", "discharge_x0_left_deg", "discharge_x0_right_deg", "discharge_xplus01_deg", "discharge_xplus01_left_deg", "discharge_xplus01_right_deg", "discharge_xminus01_deg", "discharge_xminus01_left_deg", "discharge_xminus01_right_deg", "discharge_x0_center_physical_m", "discharge_x0_band_clipped", "discharge_x0_band_min_m", "discharge_x0_band_max_m", "discharge_xplus01_center_physical_m", "discharge_xplus01_band_clipped", "discharge_xplus01_band_min_m", "discharge_xplus01_band_max_m", "discharge_xminus01_center_physical_m", "discharge_xminus01_band_clipped", "discharge_xminus01_band_min_m", "discharge_xminus01_band_max_m", *(f"discharge_{cut}_minimum_height_particle_diameters" for cut in ("x0", "xplus01", "xminus01")), *(f"discharge_{cut}_{side}_profile_start_height_m" for cut in ("x0", "xplus01", "xminus01") for side in ("left", "right")), "repose_deg", "repose_axis0_deg", "repose_axis0_plus_deg", "repose_axis0_minus_deg", "repose_axis45_deg", "repose_axis45_plus_deg", "repose_axis45_minus_deg", "repose_axis90_deg", "repose_axis90_plus_deg", "repose_axis90_minus_deg", "repose_axis135_deg", "repose_axis135_plus_deg", "repose_axis135_minus_deg", "discharge_error", "repose_error", "score", "workspace", *(f"discharge_{cut}_{side}_segment{segment}_{field}" for cut in ("x0", "xplus01", "xminus01") for side in ("left", "right") for segment in (1, 2) for field in ("count", "deg", "support")))
 DIAGNOSTIC_FIELDS = ("trial_id", "phase", "status", "reason", "parameters_json", "workspace")
 LIVE_STATUS_FIELDS = ("trial", "phase", "status", "simulation_time_s", "started_at", "elapsed_seconds", "updated_at")
 
@@ -205,6 +205,9 @@ def discharge_cut_result_fields(measurement: dict) -> dict:
         raise ValueError("discharge results must contain the three physical cuts at -0.1, 0.0, and +0.1 m")
     fields = {}
     for cut_name, section in sections_by_cut.items():
+        fields[f"discharge_{cut_name}_minimum_height_particle_diameters"] = float(section["minimum_height_particle_diameters"])
+        fields[f"discharge_{cut_name}_left_profile_start_height_m"] = float(section["profile_start_height_left"])
+        fields[f"discharge_{cut_name}_right_profile_start_height_m"] = float(section["profile_start_height_right"])
         fields[f"discharge_{cut_name}_deg"] = section["mean_angle_deg"]
         fields[f"discharge_{cut_name}_left_deg"] = section["left_angle_deg"]
         fields[f"discharge_{cut_name}_right_deg"] = section["right_angle_deg"]
@@ -549,6 +552,7 @@ class CalibrationController:
             raise RuntimeError(f"measurement artifact missing: {path}")
         snapshot_text = path.read_text(encoding="utf-8")
         points = parse_vtk_points(snapshot_text)
+        radii = None
         trial_dir = path.parents[2]
         trial_label = trial_dir.name
 
@@ -566,6 +570,7 @@ class CalibrationController:
                     write_discharge_failure_svg(
                         output, points, trial_label, reason,
                         horizontal_axis="z", nbrratio=ratio, mesh_bounds=bounds,
+                        particle_radii=radii, minimum_height_particle_diameters=2.0,
                     )
                 png_output = output.with_suffix(".png")
                 write_svg_png(output, png_output)

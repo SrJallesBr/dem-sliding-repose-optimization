@@ -100,6 +100,9 @@ class MeasurementCaptureAndDumpCleanupTests(unittest.TestCase):
                 "section_half_width": 0.05 * ratio,
                 "base_left": discharge_result["toe_left"],
                 "base_right": discharge_result["toe_right"],
+                "minimum_height_particle_diameters": 2.0,
+                "profile_start_height_left": 0.24,
+                "profile_start_height_right": 0.24,
             })
             discharge_result["sections"].append(section)
         profiles = [
@@ -161,6 +164,9 @@ class MeasurementCaptureAndDumpCleanupTests(unittest.TestCase):
                     "right_angle_deg": angle + 1.0,
                     "band_clipped": center != 0.0,
                     "effective_band_physical": (max(center - 0.075, -0.12), min(center + 0.075, 0.12)),
+                    "minimum_height_particle_diameters": 2.0,
+                    "profile_start_height_left": 0.1,
+                    "profile_start_height_right": 0.11,
                     "left_segments": [],
                     "right_segments": [],
                 }
@@ -195,6 +201,8 @@ class MeasurementCaptureAndDumpCleanupTests(unittest.TestCase):
             self.assertEqual(text.count("CORTE X FISICO"), 3)
             self.assertIn("NO VALID ANGLE", text)
             self.assertIn("insufficient segment support", text.lower())
+            self.assertEqual(text.count('data-kind="minimum-height-cutoff"'), 6)
+            self.assertIn("CORTE MINIMO", text)
             self.assertNotIn("MEDIA DO CORTE:", text)
             self.assertNotIn("data-kind=\"fit-", text)
             self.assertTrue((trial_dir / "medicao_descarga.png").is_file())
