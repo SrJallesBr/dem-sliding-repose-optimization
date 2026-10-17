@@ -38,6 +38,11 @@ class MeasurementVisualTests(unittest.TestCase):
         self.assertIn("MEDIA GLOBAL", text)
         self.assertIn("NBR:", text)
         self.assertIn("TODAS AS PARTICULAS: CINZA", text)
+        self.assertIn("BASE ABAIXO DO CORTE", text)
+        self.assertIn('data-kind="basal-reference"', text)
+        basal = [element for element in svg_root.iter() if element.attrib.get("data-kind") == "basal-reference"]
+        self.assertTrue(basal)
+        self.assertTrue(all(float(element.attrib["fill-opacity"]) < 0.3 for element in basal))
         for angle in measurement["direction_angles_deg"]:
             self.assertIn(f"{angle:.2f} GRAUS", text)
 

@@ -138,7 +138,7 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
         '<rect width="100%" height="100%" fill="#f7f9fc"/>',
         f'<text x="48" y="52" fill="{navy}" font-family="monospace" font-size="34" font-weight="bold">{html.escape(title)} - DESCARGA / DESLIZAMENTO</text>',
         f'<text x="48" y="88" fill="{navy}" font-family="monospace" font-size="17">3 CORTES FISICOS: {html.escape(cuts_label)} | MEIA-LARGURA={half_width_physical:.3f} M | CONVERSAO PELA NBRRATIO</text>',
-        f'<text x="48" y="118" fill="{navy}" font-family="monospace" font-size="15">{axis} HORIZONTAL | Y VERTICAL | ESCALA VISUAL X/Y IGUAL | LINHAS TRACEJADAS: CORTE MINIMO; PONTOS ABAIXO OCULTOS NO AJUSTE</text>',
+        f'<text x="48" y="118" fill="{navy}" font-family="monospace" font-size="15">{axis} HORIZONTAL | Y VERTICAL | ESCALA X/Y IGUAL | BASE TRANSLUCIDA: REFERENCIA GEOMETRICA; FORA DOS FITS</text>',
     ]
     panel_w, panel_h, gap_x, margin_x, top = 560, 750, 24, 36, 150
     for section_index, section_result in enumerate(result["sections"]):
@@ -158,11 +158,11 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
             "left": float(section_result["profile_start_height_left"]),
             "right": float(section_result["profile_start_height_right"]),
         }
-        cloud = [
-            (x, y) for x, y in all_cloud
-            if y >= cutoff_values["left" if x < centerline else "right"]
-        ]
-        hidden_count = len(all_cloud) - len(cloud)
+        cloud = all_cloud
+        hidden_count = sum(
+            y < cutoff_values["left" if x < centerline else "right"]
+            for x, y in all_cloud
+        )
         xmin, xmax = min(x for x, _ in cloud), max(x for x, _ in cloud)
         ymin, ymax = min(y for _, y in cloud), max(y for _, y in cloud)
         padx, pady = max((xmax - xmin) * .08, 1e-9), max((ymax - ymin) * .08, 1e-9)
@@ -186,15 +186,17 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
         out.append(f'<rect x="{left}" y="{plot_top}" width="{plot_w}" height="{plot_h}" fill="#f8fafc" stroke="{navy}" stroke-width="1.5"/>')
         for x, y in cloud:
             side = "left" if x < centerline else "right"
-            cutoff_y = cutoff_values[side]
-            out.append(f'<circle data-kind="particle" data-particle-y="{y:.9f}" data-cutoff-y="{cutoff_y:.9f}" data-side="{side}" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="2.2" fill="#7d8da1" fill-opacity=".68"/>')
+            is_basal_reference = y < cutoff_values[side]
+            kind = "basal-reference" if is_basal_reference else "particle"
+            opacity = ".16" if is_basal_reference else ".62"
+            out.append(f'<circle data-kind="{kind}" data-particle-y="{y:.9f}" data-cutoff-y="{cutoff_values[side]:.9f}" data-side="{side}" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="2.2" fill="#7d8da1" fill-opacity="{opacity}"/>')
         for side, color, is_left in (("left", red, True), ("right", blue, False)):
             cutoff_y = cutoff_values[side]
             side_x = [x for x, _ in all_cloud if (x < centerline) == is_left]
             if side_x:
                 endpoint = min(side_x) if is_left else max(side_x)
                 out.append(f'<line data-kind="minimum-height-cutoff" data-cutoff-side="{side}" data-cutoff-y="{cutoff_y:.9f}" x1="{X(centerline):.2f}" y1="{Y(cutoff_y):.2f}" x2="{X(endpoint):.2f}" y2="{Y(cutoff_y):.2f}" stroke="{color}" stroke-width="3" stroke-dasharray="8 5"/>')
-        out.append(f'<text data-kind="minimum-height-label" x="{px+14}" y="{top+92}" fill="{orange}" font-family="monospace" font-size="12" font-weight="bold">CORTE MINIMO ESQ Y={cutoff_values["left"]:.4f} | DIR Y={cutoff_values["right"]:.4f} M | OCULTAS={hidden_count}</text>')
+        out.append(f'<text data-kind="minimum-height-label" x="{px+14}" y="{top+92}" fill="{orange}" font-family="monospace" font-size="10" font-weight="bold">FIT ESQ Y={cutoff_values["left"]:.4f} | DIR Y={cutoff_values["right"]:.4f} M | BASE TRANSLUCIDA={hidden_count} (REF.)</text>')
         for side, color in (("left", red), ("right", blue)):
             fit_points = section_result[f"{side}_fit_points"]
             bx, by = section_result[f"base_{side}"]
@@ -438,12 +440,11 @@ def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_not
             "right": float(pair["positive_profile"].get("profile_start_height", 0.0)),
             "left": float(pair["negative_profile"].get("profile_start_height", 0.0)),
         }
-        # Each face has its own basal height; apply that face's cutoff to its
-        # half of the section so the visual line matches the selected samples.
+        # Keep the sub-cutoff bed visible but de-emphasized: it establishes the
+        # basal reference/cutoff, while only the opaque profile points enter fits.
         projected_cloud = [
             ((float(x) - center_x) * cos_t + (float(z) - center_z) * sin_t, float(y))
             for x, y, z in cloud
-            if float(y) >= profile_cutoffs["right" if ((float(x) - center_x) * cos_t + (float(z) - center_z) * sin_t) >= 0 else "left"]
         ]
         reference_profiles = [pair["positive_profile"], pair["negative_profile"]]
         base_y_values = [float(profile["base"][1]) for profile in reference_profiles if profile.get("base")]
@@ -471,7 +472,11 @@ def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_not
         out.append(f'<rect x="{left}" y="{top}" width="{plot_w}" height="{plot_h}" fill="#f8fafc" stroke="{navy}" stroke-width="1.5"/>')
         out.append(f'<defs><clipPath id="repose-plot-clip-{pair_index}"><rect x="{left}" y="{top}" width="{plot_w}" height="{plot_h}"/></clipPath></defs>')
         for x, y in projected_cloud:
-            out.append(f'<circle data-kind="particle" data-particle-y="{y:.9f}" data-cutoff-y="{profile_cutoffs["right" if x >= 0 else "left"]:.9f}" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="1.7" fill="#7d8da1" fill-opacity=".42"/>')
+            side = "right" if x >= 0 else "left"
+            is_basal_reference = y < profile_cutoffs[side]
+            kind = "basal-reference" if is_basal_reference else "particle"
+            opacity = ".16" if is_basal_reference else ".42"
+            out.append(f'<circle data-kind="{kind}" data-particle-y="{y:.9f}" data-cutoff-y="{profile_cutoffs[side]:.9f}" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="1.7" fill="#7d8da1" fill-opacity="{opacity}"/>')
         out.append(f'<line x1="{X(0):.2f}" y1="{Y(ymin):.2f}" x2="{X(0):.2f}" y2="{Y(ymax):.2f}" stroke="#14816b" stroke-width="2.5" stroke-dasharray="10 7"/>')
         out.append(f'<line x1="{X(xmin):.2f}" y1="{Y(0):.2f}" x2="{X(xmax):.2f}" y2="{Y(0):.2f}" stroke="#14966c" stroke-width="3" stroke-dasharray="10 7"/>')
         out.append(f'<line data-kind="minimum-height-cutoff" data-cutoff-side="left" data-cutoff-y="{profile_cutoffs["left"]:.9f}" x1="{X(xmin):.2f}" y1="{Y(profile_cutoffs["left"]):.2f}" x2="{X(0):.2f}" y2="{Y(profile_cutoffs["left"]):.2f}" stroke="#b42318" stroke-width="3" stroke-dasharray="8 5"/>')
@@ -536,9 +541,10 @@ def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_not
     angle_text = ", ".join(f"{float(angle):.2f}" for angle in result["direction_angles_deg"])
     legend_text = (
         "TODAS AS PARTICULAS: CINZA | SELECIONADAS: VERDE | BASES: AMARELO | "
+        "BASE ABAIXO DO CORTE: TRANSLUCIDA, USADA COMO REFERENCIA; NAO ENTRA NOS FITS | "
         "RESIDUOS ALTOS: INCLUIDOS COM PESO MENOR (LARANJA) | FORA DO DOMINIO: X LARANJA"
         if result.get("profile_method") == "discharge_base_anchored_huber"
-        else "TODAS AS PARTICULAS: CINZA | SELECIONADAS: VERDE | PONTOS REJEITADOS: LARANJA"
+        else "TODAS AS PARTICULAS: CINZA | SELECIONADAS: VERDE | BASE ABAIXO DO CORTE: TRANSLUCIDA, USADA COMO REFERENCIA; NAO ENTRA NOS FITS | PONTOS REJEITADOS: LARANJA"
     )
     out.extend([
         f'<text x="48" y="1040" fill="{navy}" font-family="monospace" font-size="18" font-weight="bold">MEDIA GLOBAL: {float(result["mean_angle_deg"]):.2f} GRAUS | DESVIO ENTRE 8 LADOS: {float(result.get("stddev_deg",0.0)):.2f} GRAUS</text>',

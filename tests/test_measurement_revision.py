@@ -170,7 +170,7 @@ class MeasurementRevisionTests(unittest.TestCase):
         self.assertIn("BANDA EFETIVA", svg)
         self.assertIn("CLIPADA PELA MALHA", svg)
         self.assertEqual(svg.count('data-kind="minimum-height-cutoff"'), 6)
-        self.assertIn("CORTE MINIMO", svg)
+        self.assertIn("FIT ESQ Y=", svg)
 
     def test_clipped_discharge_band_excludes_particles_beyond_scaled_mesh_bounds(self):
         points, radii = self._three_cut_cloud()
@@ -389,7 +389,9 @@ class MeasurementRevisionTests(unittest.TestCase):
         self.assertEqual(len(fit_lines), 6)
         cutoff_lines = [el for el in root.iter() if el.attrib.get("data-kind") == "minimum-height-cutoff"]
         self.assertEqual(len(cutoff_lines), 6)
-        self.assertIn("CORTE MINIMO", svg)
+        self.assertIn("FIT ESQ Y=", svg)
+        self.assertIn("BASE TRANSLUCIDA", svg)
+        self.assertIn("BASE TRANSLUCIDA: REFERENCIA GEOMETRICA; FORA DOS FITS", svg)
         ordered_nodes = list(root.iter())
         selected_index = next(index for index, el in enumerate(ordered_nodes) if el.attrib.get("data-kind") == "selected")
         outlier_index = next(index for index, el in enumerate(ordered_nodes) if el.attrib.get("data-kind") == "outlier")
