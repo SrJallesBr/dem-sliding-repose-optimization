@@ -153,6 +153,35 @@ class MeasurementRevisionTests(unittest.TestCase):
         self.assertIn("BANDA EFETIVA", svg)
         self.assertIn("CLIPADA PELA MALHA", svg)
 
+    def test_clipped_discharge_band_excludes_particles_beyond_scaled_mesh_bounds(self):
+        points, radii = self._three_cut_cloud()
+        expected = measure_v_sliding_angle_three_cuts(
+            points, radii, horizontal_axis="z",
+            mesh_bounds={"x": (-2.4, 2.4), "z": (-5.0, 5.0)}, nbrratio=20.0,
+        )
+        contaminated_points = list(points)
+        contaminated_radii = list(radii)
+        for index in range(12):
+            y = 0.05 + 2 * 0.01 * index
+            for outside_x in (-2.6, 2.6):
+                for sign in (-1.0, 1.0):
+                    contaminated_points.append((outside_x, y, sign * 0.01))
+                    contaminated_radii.append(0.01)
+        actual = measure_v_sliding_angle_three_cuts(
+            contaminated_points, contaminated_radii, horizontal_axis="z",
+            mesh_bounds={"x": (-2.4, 2.4), "z": (-5.0, 5.0)}, nbrratio=20.0,
+        )
+        for expected_section, actual_section in zip(expected["sections"], actual["sections"]):
+            self.assertEqual(actual_section["section_center_physical"], expected_section["section_center_physical"])
+            self.assertAlmostEqual(actual_section["left_angle_deg"], expected_section["left_angle_deg"], places=8)
+            self.assertAlmostEqual(actual_section["right_angle_deg"], expected_section["right_angle_deg"], places=8)
+            self.assertEqual(actual_section["section_normal_bounds_sim"], actual_section["effective_band_sim"])
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "clipped-effective-bands.svg"
+            write_discharge_svg(output, contaminated_points, actual, "trial", "nbrratio=20")
+            svg = output.read_text(encoding="utf-8")
+        self.assertEqual(svg.count('data-kind="particle"'), 72)
+
     def test_repose_selection_uses_outer_face_not_nearest_centerline_particle(self):
         points = []
         radii = []

@@ -145,7 +145,12 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
         px = margin_x + section_index * (panel_w + gap_x)
         section_center = float(section_result["section_center"])
         half_width = float(section_result["section_half_width"])
-        cloud = [(float(p[hi]), float(p[1])) for p in points if abs(float(p[ni]) - section_center) <= half_width]
+        section_bounds = section_result.get("section_normal_bounds_sim")
+        if section_bounds is None:
+            cloud = [(float(p[hi]), float(p[1])) for p in points if abs(float(p[ni]) - section_center) <= half_width]
+        else:
+            normal_low, normal_high = map(float, section_bounds)
+            cloud = [(float(p[hi]), float(p[1])) for p in points if normal_low <= float(p[ni]) <= normal_high]
         if not cloud:
             raise ValueError(f"no particles in discharge cut centered at {section_center}")
         xmin, xmax = min(x for x, _ in cloud), max(x for x, _ in cloud)

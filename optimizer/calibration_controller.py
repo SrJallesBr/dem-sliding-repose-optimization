@@ -34,7 +34,7 @@ SEED_PATTERNS = {
     "insertion": re.compile(r"(insert/stream\s+seed\s+)(\d+)", re.IGNORECASE),
 }
 STATUS_FIELDS = ("trial_id", "phase", "status", "stage", "message", "workspace", "started_at", "finished_at")
-RESULT_FIELDS = ("trial_id", "phase", "status", "sf11", "rf11", "rf12", "CED11", "distribution_seed", "insertion_seed", "discharge_deg", "discharge_left_deg", "discharge_right_deg", "discharge_asymmetry_deg", "discharge_x0_deg", "discharge_x0_left_deg", "discharge_x0_right_deg", "discharge_xplus01_deg", "discharge_xplus01_left_deg", "discharge_xplus01_right_deg", "discharge_xminus01_deg", "discharge_xminus01_left_deg", "discharge_xminus01_right_deg", "discharge_x0_band_clipped", "discharge_x0_band_min_m", "discharge_x0_band_max_m", "discharge_xplus01_band_clipped", "discharge_xplus01_band_min_m", "discharge_xplus01_band_max_m", "discharge_xminus01_band_clipped", "discharge_xminus01_band_min_m", "discharge_xminus01_band_max_m", "repose_deg", "repose_axis0_deg", "repose_axis0_plus_deg", "repose_axis0_minus_deg", "repose_axis45_deg", "repose_axis45_plus_deg", "repose_axis45_minus_deg", "repose_axis90_deg", "repose_axis90_plus_deg", "repose_axis90_minus_deg", "repose_axis135_deg", "repose_axis135_plus_deg", "repose_axis135_minus_deg", "discharge_error", "repose_error", "score", "workspace", *(f"discharge_{cut}_{side}_segment{segment}_{field}" for cut in ("x0", "xplus01", "xminus01") for side in ("left", "right") for segment in (1, 2) for field in ("count", "deg", "support")))
+RESULT_FIELDS = ("trial_id", "phase", "status", "sf11", "rf11", "rf12", "CED11", "distribution_seed", "insertion_seed", "discharge_deg", "discharge_left_deg", "discharge_right_deg", "discharge_asymmetry_deg", "discharge_x0_deg", "discharge_x0_left_deg", "discharge_x0_right_deg", "discharge_xplus01_deg", "discharge_xplus01_left_deg", "discharge_xplus01_right_deg", "discharge_xminus01_deg", "discharge_xminus01_left_deg", "discharge_xminus01_right_deg", "discharge_x0_center_physical_m", "discharge_x0_band_clipped", "discharge_x0_band_min_m", "discharge_x0_band_max_m", "discharge_xplus01_center_physical_m", "discharge_xplus01_band_clipped", "discharge_xplus01_band_min_m", "discharge_xplus01_band_max_m", "discharge_xminus01_center_physical_m", "discharge_xminus01_band_clipped", "discharge_xminus01_band_min_m", "discharge_xminus01_band_max_m", "repose_deg", "repose_axis0_deg", "repose_axis0_plus_deg", "repose_axis0_minus_deg", "repose_axis45_deg", "repose_axis45_plus_deg", "repose_axis45_minus_deg", "repose_axis90_deg", "repose_axis90_plus_deg", "repose_axis90_minus_deg", "repose_axis135_deg", "repose_axis135_plus_deg", "repose_axis135_minus_deg", "discharge_error", "repose_error", "score", "workspace", *(f"discharge_{cut}_{side}_segment{segment}_{field}" for cut in ("x0", "xplus01", "xminus01") for side in ("left", "right") for segment in (1, 2) for field in ("count", "deg", "support")))
 DIAGNOSTIC_FIELDS = ("trial_id", "phase", "status", "reason", "parameters_json", "workspace")
 LIVE_STATUS_FIELDS = ("trial", "phase", "status", "simulation_time_s", "started_at", "elapsed_seconds", "updated_at")
 
@@ -187,12 +187,28 @@ def measure_pile_angle(points, bins=24, x_half_width=0.02, particle_radii=None) 
 
 
 def discharge_cut_result_fields(measurement: dict) -> dict:
-    """Persist per-cut angle and two-piece fit diagnostics in results.csv."""
+    """Persist cut measurements by their physical coordinates, not section list order."""
+    cut_names = {0.0: "x0", 0.1: "xplus01", -0.1: "xminus01"}
+    sections_by_cut = {}
+    for section in measurement.get("sections", []):
+        if "section_center_physical" not in section:
+            raise ValueError("discharge section is missing section_center_physical")
+        center = float(section["section_center_physical"])
+        matching = [value for value in cut_names if math.isclose(center, value, rel_tol=0.0, abs_tol=1e-9)]
+        if len(matching) != 1:
+            raise ValueError(f"unexpected discharge section center: {center}")
+        cut_name = cut_names[matching[0]]
+        if cut_name in sections_by_cut:
+            raise ValueError(f"duplicate discharge section center: {center}")
+        sections_by_cut[cut_name] = section
+    if set(sections_by_cut) != set(cut_names.values()):
+        raise ValueError("discharge results must contain the three physical cuts at -0.1, 0.0, and +0.1 m")
     fields = {}
-    for cut_name, section in zip(("x0", "xplus01", "xminus01"), measurement.get("sections", [])):
+    for cut_name, section in sections_by_cut.items():
         fields[f"discharge_{cut_name}_deg"] = section["mean_angle_deg"]
         fields[f"discharge_{cut_name}_left_deg"] = section["left_angle_deg"]
         fields[f"discharge_{cut_name}_right_deg"] = section["right_angle_deg"]
+        fields[f"discharge_{cut_name}_center_physical_m"] = float(section["section_center_physical"])
         fields[f"discharge_{cut_name}_band_clipped"] = section["band_clipped"]
         fields[f"discharge_{cut_name}_band_min_m"] = section["effective_band_physical"][0]
         fields[f"discharge_{cut_name}_band_max_m"] = section["effective_band_physical"][1]

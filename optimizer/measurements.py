@@ -532,7 +532,7 @@ def measure_repose_eight_ray_least_squares(
     }
 
 
-def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis, mesh_bounds=None, section_half_width=0.1, section_center=None, max_horizontal_jump_radii=5.0, min_fit_points=5, min_r2=0.90, profile_selection="nearest_centerline", height_band_factor=2.0, minimum_height_particle_diameters=0.0):
+def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis, mesh_bounds=None, section_half_width=0.1, section_center=None, section_normal_bounds_sim=None, max_horizontal_jump_radii=5.0, min_fit_points=5, min_r2=0.90, profile_selection="nearest_centerline", height_band_factor=2.0, minimum_height_particle_diameters=0.0):
     """Trace two faces by diameter-height bands and fit all selected samples from base to top.
 
     ``nearest_centerline`` is the V-test selector; ``outer_envelope`` selects the exposed pile boundary for repose. Both share the same individual-radius surface correction, base anchor, Huber fit, and geometry checks.
@@ -560,6 +560,10 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
         if axis not in {"x", "z"} or len(bounds) != 2 or float(bounds[1]) <= float(bounds[0]):
             raise ValueError(f"invalid mesh bounds for axis {axis!r}")
     normal_bounds = mesh_bounds.get(normal_axis, (-section_half_width, section_half_width))
+    if section_normal_bounds_sim is not None:
+        section_normal_bounds_sim = tuple(map(float, section_normal_bounds_sim))
+        if len(section_normal_bounds_sim) != 2 or not all(math.isfinite(value) for value in section_normal_bounds_sim) or section_normal_bounds_sim[1] <= section_normal_bounds_sim[0]:
+            raise ValueError("section_normal_bounds_sim must contain two finite increasing bounds")
     horizontal_bounds = mesh_bounds.get(horizontal_axis, (0.0, 0.0))
     section_center = (
         (float(normal_bounds[0]) + float(normal_bounds[1])) / 2.0
@@ -569,7 +573,11 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
     section = [
         (float(point[horizontal_index]), float(point[1]), float(radius))
         for point, radius in zip(points, particle_radii)
-        if abs(float(point[normal_index]) - section_center) <= section_half_width
+        if (
+            section_normal_bounds_sim[0] <= float(point[normal_index]) <= section_normal_bounds_sim[1]
+            if section_normal_bounds_sim is not None
+            else abs(float(point[normal_index]) - section_center) <= section_half_width
+        )
     ]
     if len(section) < 2 * min_fit_points:
         raise ValueError("insufficient particles in the central vertical section")
@@ -785,6 +793,8 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
         "centerline": centerline,
         "section_center": section_center,
         "section_half_width": section_half_width,
+        "section_normal_bounds_sim": section_normal_bounds_sim,
+        "section_particle_count": len(section),
         "height_bin_size": band_height,
         "median_radius": median_radius,
         "jump_limit": max_horizontal_jump_radii * median_radius,
@@ -857,7 +867,7 @@ def measure_v_sliding_angle_three_cuts(
         else:
             mesh_low, mesh_high = map(float, normal_bounds)
             effective_band = (max(requested_band[0], mesh_low), min(requested_band[1], mesh_high))
-            if effective_band[0] > effective_band[1]:
+            if effective_band[0] >= effective_band[1]:
                 raise ValueError(f"discharge cut x={physical_center:+.3f} m lies outside the mesh")
             band_clipped = not (
                 math.isclose(effective_band[0], requested_band[0], rel_tol=1e-9, abs_tol=1e-9)
@@ -870,6 +880,7 @@ def measure_v_sliding_angle_three_cuts(
             mesh_bounds=mesh_bounds,
             section_half_width=section_half_width,
             section_center=section_center,
+            section_normal_bounds_sim=effective_band,
         )
         measurement["section_center_physical"] = physical_center
         measurement["section_half_width_physical"] = physical_half_width

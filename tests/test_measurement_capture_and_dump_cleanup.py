@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from unittest.mock import patch
 
-from optimizer.calibration_controller import CalibrationController, MeasurementRejected
+from optimizer.calibration_controller import CalibrationController, MeasurementRejected, discharge_cut_result_fields
 from optimizer.measurements import UnmeasurableAngle
 
 
@@ -150,6 +150,32 @@ class MeasurementCaptureAndDumpCleanupTests(unittest.TestCase):
             self.assertIn("REFERENCIA HORIZONTAL Y=0", repose_text)
             self.assertIn("REFERENCIA HORIZONTAL", repose_text)
             self.assertIn("TRIAL", repose_text)
+
+    def test_discharge_result_fields_follow_physical_cut_coordinates(self):
+        measurement = {
+            "sections": [
+                {
+                    "section_center_physical": center,
+                    "mean_angle_deg": angle,
+                    "left_angle_deg": angle - 1.0,
+                    "right_angle_deg": angle + 1.0,
+                    "band_clipped": center != 0.0,
+                    "effective_band_physical": (max(center - 0.075, -0.12), min(center + 0.075, 0.12)),
+                    "left_segments": [],
+                    "right_segments": [],
+                }
+                for center, angle in ((-0.1, 10.0), (0.0, 20.0), (0.1, 30.0))
+            ]
+        }
+        fields = discharge_cut_result_fields(measurement)
+        self.assertEqual(fields["discharge_x0_deg"], 20.0)
+        self.assertEqual(fields["discharge_xplus01_deg"], 30.0)
+        self.assertEqual(fields["discharge_xminus01_deg"], 10.0)
+        self.assertEqual(fields["discharge_x0_center_physical_m"], 0.0)
+        self.assertEqual(fields["discharge_xplus01_center_physical_m"], 0.1)
+        self.assertEqual(fields["discharge_xminus01_center_physical_m"], -0.1)
+        self.assertEqual(fields["discharge_xminus01_band_min_m"], -0.12)
+        self.assertTrue(fields["discharge_xplus01_band_clipped"])
 
     def test_unmeasurable_discharge_uses_official_three_cut_figure_without_angle(self):
         with tempfile.TemporaryDirectory() as temp:

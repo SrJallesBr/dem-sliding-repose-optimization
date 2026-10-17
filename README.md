@@ -5,7 +5,7 @@ This repository contains the LIGGGHTS optimization project for two paired respon
 1. **Sliding / discharge measurement** — the requested sliding test, measured from the V-test deck. Its standard result image uses three physical X-cuts (−0.10, 0.00 and +0.10 m), reports both faces per cut, and records cut/overall means.
 2. **Angle of repose** — measured independently from the repose deck and recorded as the second response for each trial.
 
-The attached reference image is the sliding/discharge measurement figure; the repose measurement is a separate artifact. Targets are objectives, not guaranteed outcomes.
+The attached reference image is the sliding/discharge measurement figure; the repose measurement is a separate artifact. Targets are objectives, not guaranteed outcomes. The measurement protocol, physical cut mapping, clipping behavior, and validity limits are documented in [`docs/measurement-protocol.md`](docs/measurement-protocol.md).
 
 ## Campaign settings
 
