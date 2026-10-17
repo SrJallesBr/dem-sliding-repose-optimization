@@ -1,0 +1,62 @@
+{
+  "calibration_name": "doe_repouso40_deslizamento73p4_20261007",
+  "target_discharge_deg": 73.4,
+  "target_repose_deg": 40.0,
+  "tolerance_deg": 0.5,
+  "acceptance_criteria": {
+    "per_response_absolute_error_deg_max": 0.5,
+    "require_all_responses_within_tolerance": true
+  },
+  "mpi_processes_per_trial": 1,
+  "parallel_trials": 12,
+  "measurement_retry_limit": 2,
+  "doe_trials": 45,
+  "minimum_doe_complete": 45,
+  "doe_contingency_batch_size": 20,
+  "refinement_trials": 48,
+  "validation_trials": 15,
+  "max_trials": 108,
+  "cohesion_guard": {
+    "enabled": true,
+    "max_boundary_probes": 8
+  },
+  "model_candidate_pool": 6000,
+  "random_seed": 86028157,
+  "weights": {
+    "discharge": 1.0,
+    "repose": 1.0
+  },
+  "parameters": {
+    "sf11": {
+      "min": 0.2,
+      "max": 2.0,
+      "initial": 0.5
+    },
+    "rf11": {
+      "min": 0.2,
+      "max": 2.0,
+      "initial": 0.8
+    },
+    "CED11": {
+      "min": 0.0,
+      "max": 10000000.0,
+      "initial": 1000.0
+    }
+  },
+  "parameter_groups": {
+    "discharge": [
+      "sf11",
+      "rf11",
+      "CED11"
+    ],
+    "repose": [
+      "sf11",
+      "rf11",
+      "CED11"
+    ]
+  },
+  "optimization_mode": "joint_two_tests_per_trial",
+  "method": "DOE Latin Hypercube com modelo quadrático, refinamento e validação independente; fila contínua que repõe cada worker assim que um trial termina.",
+  "article_adaptation": "Inputs fornecidos pelo usuário: deslizamento no V e ângulo de repouso. rf12 permanece fixo em 1.0. Fatores DOE: sf11, rf11 e CED11. Contagens preservadas da campanha anterior: 45 DOE, 48 refinamento, 15 validação.",
+  "mpi_processes": 1
+}
