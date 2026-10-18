@@ -117,7 +117,7 @@ for trial_id in (1, 23, 45):
         if r_result is not None:
             r_svg = preview / "medicao_repouso_quatro_cortes.svg"
             r_png = preview / "medicao_repouso_quatro_cortes.png"
-            write_repose_svg(r_svg, r_result, "DOE trial 45 — repouso 10 s", "NBR e escala do dump original", points=r_points)
+            write_repose_svg(r_svg, r_result, "DOE trial 45 — repouso 10 s", "NBR e escala do dump original", points=r_points, historical_preview=True)
         else:
             r_svg = preview / "medicao_repouso_quatro_cortes.svg"
             r_png = preview / "medicao_repouso_quatro_cortes.png"

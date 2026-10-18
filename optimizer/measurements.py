@@ -350,16 +350,18 @@ def measure_repose_eight_ray_least_squares(
     radial_bins=None,
     min_points_per_ray=8,
     particle_radii=None,
-    height_band_factor=1.5,
+    height_band_factor=0.25,
     minimum_height_particle_diameters=2.0,
+    outlier_tolerance_radii=1.75,
 ):
-    """Measure 8 repose faces with the same base-anchored robust fit as discharge.
+    """Measure eight repose faces from exact section surfaces, independently of discharge.
 
     The four vertical diametral planes pass through the fixed (x,z)=(0,0)
     axis at 0/45/90/135 degrees. A particle contributes to a plane only when
     its sphere intersects it; the in-plane radius is sqrt(r²-normal_offset²).
-    Each of the eight exposed faces is then sampled in 2×median-radius height
-    bands, individually radius-corrected and Huber-fit from its basal anchor.
+    Sample horizontal circle intersections on a regular physical-height grid.
+    Sphere centers below the cutoff are ineligible. Fit a majority-supported
+    free-intercept line; never force the fit through one selected particle.
     ``radial_bins`` is retained for API compatibility; it is not used here.
     """
     if len(points) < 2 * int(min_points_per_ray):
@@ -375,6 +377,9 @@ def measure_repose_eight_ray_least_squares(
     minimum_height_particle_diameters = float(minimum_height_particle_diameters)
     if not math.isfinite(minimum_height_particle_diameters) or minimum_height_particle_diameters < 0:
         raise ValueError("minimum_height_particle_diameters must be finite and nonnegative")
+    outlier_tolerance_radii = float(outlier_tolerance_radii)
+    if not math.isfinite(outlier_tolerance_radii) or outlier_tolerance_radii <= 0:
+        raise ValueError("outlier_tolerance_radii must be finite and positive")
     cloud = [tuple(map(float, point)) for point in points]
     radii = [float(radius) for radius in particle_radii]
     if any(len(point) != 3 for point in cloud) or any(radius <= 0 or not math.isfinite(radius) for radius in radii):
@@ -404,6 +409,7 @@ def measure_repose_eight_ray_least_squares(
         cos_t, sin_t = math.cos(theta), math.sin(theta)
         transformed = []
         section_radii = []
+        section_particle_indices = []
         for index, (x, y, z) in enumerate(analysis_cloud):
             horizontal = x * cos_t + z * sin_t
             normal = -x * sin_t + z * cos_t
@@ -415,6 +421,7 @@ def measure_repose_eight_ray_least_squares(
                 continue
             transformed.append((0.0, y, horizontal))
             section_radii.append(in_plane_radius)
+            section_particle_indices.append(retained_indices[index])
         if len(transformed) < 2 * min_points_per_ray:
             raise UnmeasurableAngle(
                 f"diametral section {axis_angle:.0f} deg has only {len(transformed)} particle-sphere intersections"
@@ -422,66 +429,78 @@ def measure_repose_eight_ray_least_squares(
         horizontal_extent = max(abs(point[2]) for point in transformed)
         if horizontal_extent <= 0:
             raise UnmeasurableAngle(f"diametral section {axis_angle:.0f} deg has no radial span")
-        epsilon = max(minimum_slice_radius, median_particle_radius * 1e-9)
-        measured = measure_v_sliding_angle_by_height(
-            transformed,
-            section_radii,
-            horizontal_axis="z",
-            mesh_bounds={"x": (-epsilon, epsilon), "z": (-horizontal_extent, horizontal_extent)},
-            section_half_width=epsilon,
-            section_center=0.0,
-            min_fit_points=min_points_per_ray,
-            profile_selection="base_edge_nearest",
-            height_band_factor=height_band_factor,
-            minimum_height_particle_diameters=minimum_height_particle_diameters,
-        )
+        from optimizer.repose_profile import sample_repose_section
+        try:
+            measured = sample_repose_section(
+                transformed, section_radii, section_particle_indices,
+                median_particle_radius, height_band_factor,
+                minimum_height_particle_diameters, min_points_per_ray)
+        except ValueError as exc:
+            raise UnmeasurableAngle(f"section {axis_angle:.0f}: {exc}") from exc
         slice_counts.append(len(transformed))
 
         def build_face(side, direction_index, orientation_deg):
-            angle = float(measured[f"{side}_angle_deg"])
-            raw_slope = float(measured[f"{side}_slope"])
-            radial_slope = raw_slope if side == "right" else -raw_slope
+            from optimizer.repose_profile import fit_repose_profile
             base_h, base_y = map(float, measured[f"base_{side}"])
             fit_points = [tuple(map(float, item)) for item in measured[f"{side}_fit_points"]]
-            radial_envelope = [(abs(h), y) for h, y in fit_points]
-            intercept = base_y - radial_slope * abs(base_h)
+            sample_ids = measured[f"{side}_sample_particle_indices"]
+            fitted = fit_repose_profile(fit_points, median_particle_radius, sample_ids, outlier_tolerance_radii)
+            valid = fitted["valid"] and len(fitted["inlier_points"]) >= min_points_per_ray
+            reason = fitted["rejection_reason"] or ("insufficient inlier support" if not valid else "")
+            if (side == "right" and fitted["horizontal_gradient"] >= 0) or (side == "left" and fitted["horizontal_gradient"] <= 0):
+                valid, reason = False, "surface does not lean inward with height"
+            angle = fitted["angle_deg"] if valid else None
+            raw_slope = fitted["slope"]
+            radial_slope = raw_slope if side == "right" else -raw_slope
+            retained_points = fitted["inlier_points"]
+            radial_envelope = [(abs(h), y) for h, y in retained_points]
+            intercept = fitted["intercept"]
+            start_y = max(float(measured[f"profile_start_height_{side}"]), min(y for _, y in retained_points))
+            fit_start = ((start_y-intercept)/raw_slope, start_y)
             selected_centers = measured[f"{side}_selected_particle_centers"]
             projected_centers = [
                 (float(h) * cos_t, float(y), float(h) * sin_t)
                 for h, y in selected_centers
             ]
-            downweighted_surface = measured[f"{side}_downweighted_points"]
-            downweighted_y = [float(y) for _, y in downweighted_surface]
-            projected_downweighted = [
-                (float(h) * cos_t, float(y), float(h) * sin_t)
-                for h, y in selected_centers
-                if any(math.isclose(float(y), target_y, rel_tol=1e-9, abs_tol=1e-9) for target_y in downweighted_y)
-            ]
+            downweighted_surface = fitted["downweighted_points"]
+            projected_downweighted = [(h*cos_t, y, h*sin_t) for h,y in downweighted_surface]
             return {
                 "direction_index": direction_index,
                 "direction_angle_deg": orientation_deg % 360.0,
                 "profile_selection": measured["profile_selection"],
                 "angle_deg": angle,
+                "valid": valid,
+                "rejection_reason": reason,
                 "slope": radial_slope,
                 "raw_signed_slope": raw_slope,
                 "intercept": intercept,
+                "fit_start": fit_start,
                 "base": (base_h, base_y),
                 "base_axis_coordinate": float(measured[f"base_edge_axis_{side}"]),
                 "profile_start_height": float(measured[f"profile_start_height_{side}"]),
-                "fit_points": fit_points,
+                "fit_points": retained_points,
+                "profile_points": fit_points,
+                "all_samples_r2": fitted["all_samples_r2"],
                 "envelope": radial_envelope,
                 "center_envelope": [(abs(float(h)), float(y)) for h, y in selected_centers],
                 "selected_particle_points": projected_centers,
+                "selected_surface_points": [(h*cos_t, y, h*sin_t) for h,y in fit_points],
+                "sample_particle_indices": measured[f"{side}_sample_particle_indices"],
+                "sampling_evidence": measured[f"{side}_sampling_evidence"],
+                "sample_heights": [y for _,y in fit_points],
+                "axis_source": "outermost_section_sphere_surface_bound",
                 "selected_particle_centers": selected_centers,
                 "downweighted_points": downweighted_surface,
                 "downweighted_particle_points": projected_downweighted,
                 "outlier_points": [],
-                "r2": float(measured[f"{side}_r2"]),
-                "fit_quality_warning": bool(measured[f"{side}_fit_quality_warning"]),
-                "fit_support": len(fit_points),
+                "r2": float(fitted["r2"]),
+                "fit_quality_warning": fitted["r2"] < 0.90,
+                "fit_support": len(retained_points),
                 "candidate_count": int(measured[f"{side}_candidate_count"]),
                 "downweighted_count": len(downweighted_surface),
-                "median_section_radius": float(measured["median_radius"]),
+                "rejected_count": len(downweighted_surface),
+                "unique_particle_support": len({index for index,keep in zip(sample_ids,fitted["inlier_mask"]) if keep}),
+                "median_section_radius": statistics.median(section_radii),
                 "height_band_size": float(measured["height_bin_size"]),
             }
 
@@ -495,7 +514,7 @@ def measure_repose_eight_ray_least_squares(
             "axis_angle_deg": axis_angle,
             "positive_angle_deg": positive["angle_deg"],
             "negative_angle_deg": negative["angle_deg"],
-            "mean_angle_deg": (positive["angle_deg"] + negative["angle_deg"]) / 2.0,
+            "mean_angle_deg": (positive["angle_deg"] + negative["angle_deg"]) / 2.0 if positive["valid"] and negative["valid"] else None,
             "positive_profile": positive,
             "negative_profile": negative,
             "positive_fit_points": positive["envelope"],
@@ -503,18 +522,28 @@ def measure_repose_eight_ray_least_squares(
             "positive_outlier_points": positive["downweighted_particle_points"],
             "negative_outlier_points": negative["downweighted_particle_points"],
             "section_particle_count": len(transformed),
-            "median_section_radius": float(measured["median_radius"]),
+            "section_projected_centers": [(h, y) for _, y, h in transformed],
+            "section_particle_radii": section_radii,
+            "section_particle_indices": section_particle_indices,
+            "section_discarded_particle_points": [cloud[i] for i in discarded_indices if abs(-cloud[i][0]*sin_t+cloud[i][2]*cos_t) < radii[i]],
+            "median_section_radius": statistics.median(section_radii),
         })
-    mean = sum(direction_angles) / len(direction_angles)
-    variance = sum((angle - mean) ** 2 for angle in direction_angles) / len(direction_angles)
-    return {
-        "profile_method": "discharge_base_anchored_huber",
-        "repose_axis_reference": "base_edge_vertical",
+    all_valid = all(profile["valid"] for profile in direction_profiles)
+    mean = sum(direction_angles) / len(direction_angles) if all_valid else None
+    variance = sum((angle - mean) ** 2 for angle in direction_angles) / len(direction_angles) if all_valid else None
+    result = {
+        "profile_method": "repose_horizontal_surface_consensus",
+        "outlier_tolerance_radii": outlier_tolerance_radii,
+        "fit_weighting": "physical_height_trapezoidal_cells",
+        "validity_policy": {"minimum_inlier_r2":0.90,"minimum_unique_particles":5,"maximum_unsupported_gap_diameters":2.0,"minimum_fit_samples":min_points_per_ray},
+        "repose_axis_reference": "section_external_vertical",
+        "height_sampling_method": "sphere_plane_horizontal_intersection",
         "height_band_factor": height_band_factor,
         "minimum_height_particle_diameters": minimum_height_particle_diameters,
         "slice_method": "particle_sphere_plane_intersection",
         "mean_angle_deg": mean,
-        "stddev_deg": math.sqrt(variance),
+        "stddev_deg": math.sqrt(variance) if variance is not None else None,
+        "valid": all_valid,
         "direction_angles_deg": direction_angles,
         "direction_support_bins": direction_support,
         "direction_profiles": direction_profiles,
@@ -530,6 +559,12 @@ def measure_repose_eight_ray_least_squares(
         "discarded_particle_points": discarded_particle_points,
         "particle_cloud": cloud,
     }
+    if not all_valid:
+        invalid = [f'{profile["direction_angle_deg"]:.0f}: {profile["rejection_reason"]}' for profile in direction_profiles if not profile["valid"]]
+        exc = UnmeasurableAngle("; ".join(invalid))
+        exc.diagnostic_result = result
+        raise exc
+    return result
 
 
 def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis, mesh_bounds=None, section_half_width=0.1, section_center=None, section_normal_bounds_sim=None, max_horizontal_jump_radii=5.0, min_fit_points=5, min_r2=0.90, profile_selection="nearest_centerline", height_band_factor=2.0, minimum_height_particle_diameters=0.0):

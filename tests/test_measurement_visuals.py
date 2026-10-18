@@ -37,8 +37,8 @@ class MeasurementVisualTests(unittest.TestCase):
         self.assertIn("REFERENCIA HORIZONTAL Y=0", text)
         self.assertIn("MEDIA GLOBAL", text)
         self.assertIn("NBR:", text)
-        self.assertIn("TODAS AS PARTICULAS: CINZA", text)
-        self.assertIn("BASE ABAIXO DO CORTE", text)
+        self.assertIn("CINZA: ESFERAS DA SECAO", text)
+        self.assertIn("BASE TRANSLUCIDA: FORA DO FIT", text)
         self.assertIn('data-kind="basal-reference"', text)
         basal = [element for element in svg_root.iter() if element.attrib.get("data-kind") == "basal-reference"]
         self.assertTrue(basal)

@@ -120,10 +120,13 @@ endsolid
         self.assertGreater(result["median_particle_radius"], 0)
         self.assertAlmostEqual(result["median_particle_radius"], 0.014)
         for profile in result["direction_profiles"]:
-            self.assertEqual(len(profile["envelope"]), len(profile["center_envelope"]))
-            for surface, center in zip(profile["envelope"], profile["center_envelope"]):
-                self.assertGreater(surface[0], center[0])
-                self.assertAlmostEqual(surface[1], center[1])
+            for evidence in profile["sampling_evidence"]:
+                h, y = evidence["surface"]
+                center_h, center_y = evidence["center"]
+                radius = evidence["section_radius"]
+                self.assertAlmostEqual((h-center_h)**2+(y-center_y)**2, radius**2, places=10)
+                self.assertGreaterEqual(center_y, profile["profile_start_height"])
+                self.assertAlmostEqual(evidence["distance_to_axis"], min(item["distance_to_axis"] for item in evidence["eligible_candidates"]))
 
     def test_repose_snapshot_passes_vtk_particle_radii_into_measurement(self):
         points = []

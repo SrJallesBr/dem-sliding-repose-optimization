@@ -275,14 +275,14 @@ class MeasurementRevisionTests(unittest.TestCase):
                 radii.append(0.01)
         result = measure_repose_eight_ray_least_squares(points, particle_radii=radii, height_band_factor=1.5)
         baseline = measure_repose_eight_ray_least_squares(points, particle_radii=radii, height_band_factor=2.0)
-        self.assertEqual(result["profile_method"], "discharge_base_anchored_huber")
-        self.assertEqual(result["repose_axis_reference"], "base_edge_vertical")
+        self.assertEqual(result["profile_method"], "repose_horizontal_surface_consensus")
+        self.assertEqual(result["repose_axis_reference"], "section_external_vertical")
         self.assertEqual(result["axis_angles_deg"], [0.0, 45.0, 90.0, 135.0])
         self.assertEqual(len(result["pair_profiles"]), 4)
         self.assertEqual(len(result["direction_angles_deg"]), 8)
         for face_index, profile in enumerate(result["direction_profiles"]):
             self.assertEqual(profile["profile_selection"], "base_edge_nearest")
-            self.assertAlmostEqual(profile["height_band_size"], 1.5 * profile["median_section_radius"])
+            self.assertAlmostEqual(profile["height_band_size"], 1.5 * result["median_particle_radius"])
             self.assertGreater(profile["fit_support"], baseline["direction_profiles"][face_index]["fit_support"])
             first_x, first_y, first_z = profile["selected_particle_points"][0]
             direction = math.radians(profile["direction_angle_deg"])
@@ -295,6 +295,12 @@ class MeasurementRevisionTests(unittest.TestCase):
                 min(y for _, y in profile["selected_particle_centers"]),
                 profile["profile_start_height"],
             )
+            fit_start_h, fit_start_y = profile["fit_start"]
+            self.assertGreaterEqual(fit_start_y, profile["profile_start_height"])
+            self.assertAlmostEqual(
+                profile["intercept"], fit_start_y - profile["slope"] * abs(fit_start_h), places=9
+            )
+            self.assertAlmostEqual(profile["envelope"][0][1], fit_start_y, places=9)
         self.assertEqual(result["horizontal_reference_y"], 0.0)
         self.assertAlmostEqual(result["mean_angle_deg"], 30.0, delta=1.0)
 
@@ -304,7 +310,7 @@ class MeasurementRevisionTests(unittest.TestCase):
             points, radial_bins=12, min_points_per_ray=8, particle_radii=radii
         )
         self.assertEqual((result["center_x"], result["center_z"]), (0.0, 0.0))
-        self.assertEqual(result["profile_method"], "discharge_base_anchored_huber")
+        self.assertEqual(result["profile_method"], "repose_horizontal_surface_consensus")
         self.assertEqual(len(result["pair_profiles"]), 4)
         self.assertEqual(len(result["direction_profiles"]), 8)
         for pair in result["pair_profiles"]:
@@ -322,6 +328,8 @@ class MeasurementRevisionTests(unittest.TestCase):
         measurement["direction_profiles"][0]["downweighted_particle_points"] = [measurement["direction_profiles"][0]["selected_particle_points"][0]]
         measurement["direction_profiles"][0]["downweighted_count"] = 1
         measurement["discarded_particle_points"] = [(0.0, -0.01, 0.0), (0.0, 0.2, 0.0)]
+        for pair in measurement["pair_profiles"]:
+            pair["section_discarded_particle_points"] = measurement["discarded_particle_points"]
         with tempfile.TemporaryDirectory() as temp_dir:
             output = Path(temp_dir) / "repose.svg"
             write_repose_svg(output, measurement, "trial_0045", "nbrratio=25", points=points)
@@ -331,16 +339,17 @@ class MeasurementRevisionTests(unittest.TestCase):
         self.assertEqual(svg.count("LADO +"), 4)
         self.assertEqual(svg.count("LADO -"), 4)
         self.assertIn("EIXO CENTRAL (0,0)", svg)
-        self.assertIn("EIXOS VERTICAIS NAS BORDAS DAS BASES", svg)
-        self.assertIn("1 PONTO/BANDA: 1.50×RAIO MEDIANO", svg)
-        self.assertIn("INICIO: 2.0 DIAMETROS ACIMA DA BASE", svg)
+        self.assertIn("EIXOS EXTERNOS DA SECAO", svg)
+        self.assertIn("PASSO EM Y: 0.25xRAIO 3D MEDIANO", svg)
+        self.assertIn("CORTE HORIZONTAL: 2.0 DIAMETROS; AJUSTE COMECA ACIMA DO CORTE", svg)
         self.assertIn("REFERENCIA HORIZONTAL Y=0", svg)
-        self.assertIn("TODAS AS PARTICULAS", svg)
-        self.assertIn("RESIDUOS ALTOS: INCLUIDOS COM PESO MENOR", svg)
+        self.assertIn("CINZA: ESFERAS DA SECAO", svg)
+        self.assertIn("BASE TRANSLUCIDA: FORA DO FIT", svg)
+        self.assertIn("X LARANJA: EXCLUIDOS DO FIT", svg)
         toe_axes = [element for element in root.iter() if element.tag.endswith("line") and element.attrib.get("data-kind") == "toe-axis"]
         self.assertEqual(len(toe_axes), 8)
         selected_markers = [element for element in root.iter() if element.attrib.get("data-kind") == "selected"]
-        self.assertEqual(len(selected_markers), sum(profile["fit_support"] for profile in measurement["direction_profiles"]))
+        self.assertEqual(len(selected_markers), sum(profile["candidate_count"] for profile in measurement["direction_profiles"]))
         outlier_markers = [element for element in root.iter() if element.attrib.get("data-kind") == "outlier"]
         self.assertGreaterEqual(len(outlier_markers), 1)
         cutoff_lines = [element for element in root.iter() if element.attrib.get("data-kind") == "minimum-height-cutoff"]
@@ -349,6 +358,10 @@ class MeasurementRevisionTests(unittest.TestCase):
         self.assertTrue(paired_fit_lines)
         self.assertTrue(all(el.attrib.get("clip-path") for el in paired_fit_lines))
         self.assertEqual({el.attrib["data-cutoff-side"] for el in cutoff_lines}, {"left", "right"})
+        for fit_line in paired_fit_lines:
+            cutoff_y = float(fit_line.attrib["data-cutoff-screen-y"])
+            self.assertLessEqual(float(fit_line.attrib["y1"]), cutoff_y + 1e-6)
+            self.assertLessEqual(float(fit_line.attrib["y2"]), cutoff_y + 1e-6)
         particle_markers = [element for element in root.iter() if element.attrib.get("data-kind") == "particle"]
         self.assertTrue(particle_markers)
         global_outliers = [element for element in root.iter() if element.attrib.get("data-kind") == "global-outlier"]
@@ -361,7 +374,7 @@ class MeasurementRevisionTests(unittest.TestCase):
         outlier_index = next(index for index, el in enumerate(ordered_nodes) if el.attrib.get("data-kind") == "outlier")
         self.assertGreater(outlier_index, selected_index)
         circles = [el for el in root.iter() if el.tag.endswith("circle")]
-        self.assertGreater(len(circles), len(points))
+        self.assertGreater(len(circles), sum(pair["section_particle_count"] for pair in measurement["pair_profiles"]))
 
     def test_discharge_svg_combines_all_three_cuts_in_one_figure(self):
         points, radii = self._three_cut_cloud()

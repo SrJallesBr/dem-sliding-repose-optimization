@@ -25,18 +25,37 @@ def _text(x, y, text, size=12, color="#e9eef2", weight="normal"):
     return f'<text x="{x:.1f}" y="{y:.1f}" fill="{color}" font-family="Arial,sans-serif" font-size="{size}" font-weight="{weight}">{html.escape(str(text))}</text>'
 
 
-def write_discharge_svg(path: Path, points, result: dict, trial_label: str, nbr_note: str = "NBR scaling per trial deck") -> None:
+def _discharge_sphere_projection(index, radii, point_count, cx, cy, scale, basal=False):
+    """Project the existing measurement slab; do not substitute a zero-width plane."""
+    if len(radii) != point_count:
+        raise ValueError("particle_radii must have one value per plotted particle")
+    radius = float(radii[index])
+    if not math.isfinite(radius) or radius <= 0:
+        raise ValueError("plotted particle radii must be finite and positive")
+    return (f'<circle data-kind="sphere-projection" data-particle-index="{index}" '
+            f'data-radius-sim="{radius:.12g}" data-px-per-unit="{scale:.12g}" '
+            f'data-basal-reference="{str(basal).lower()}" cx="{cx:.2f}" cy="{cy:.2f}" '
+            f'r="{radius*scale:.2f}" fill="#7d8da1" fill-opacity="{.04 if basal else .07}" '
+            f'stroke="#7d8da1" stroke-opacity="{.12 if basal else .4}" stroke-width="1"/>')
+
+
+def write_discharge_svg(path: Path, points, result: dict, trial_label: str, nbr_note: str = "NBR scaling per trial deck", *, particle_radii=None) -> None:
     """Render one or three base-to-top sliding-angle sections."""
     if result.get("sections"):
-        return _write_discharge_three_cuts_svg(path, points, result, trial_label, nbr_note)
+        return _write_discharge_three_cuts_svg(path, points, result, trial_label, nbr_note, particle_radii=particle_radii)
     width, height = 1440, 1000
     axis = result["horizontal_axis"].upper()
     hi, ni = (0, 2) if axis == "X" else (2, 0)
     center = float(result.get("centerline", result.get("horizontal_center", 0.0)))
     section_center = float(result.get("section_center", 0.0))
     half_width = float(result.get("section_half_width", 0.1))
-    section = [(float(p[hi]), float(p[1]), float(p[ni])) for p in points
-               if abs(float(p[ni]) - section_center) <= half_width]
+    section_bounds = result.get("section_normal_bounds_sim")
+    if section_bounds is None:
+        normal_low, normal_high = section_center - half_width, section_center + half_width
+    else:
+        normal_low, normal_high = map(float, section_bounds)
+    section_indices = [i for i, p in enumerate(points) if normal_low <= float(p[ni]) <= normal_high]
+    section = [(float(points[i][hi]), float(points[i][1]), float(points[i][ni])) for i in section_indices]
     if not section:
         raise ValueError("no particles in the plotted central section")
     xmin, xmax = min(p[0] for p in section), max(p[0] for p in section)
@@ -62,7 +81,9 @@ def write_discharge_svg(path: Path, points, result: dict, trial_label: str, nbr_
         out.append(f'<line x1="{x0}" y1="{gy:.1f}" x2="{x0+pw}" y2="{gy:.1f}" stroke="#d8e0e9" stroke-width="1"/>')
     out.append(f'<line x1="{X(center):.2f}" y1="{y0}" x2="{X(center):.2f}" y2="{y0+ph}" stroke="#14816b" stroke-width="3" stroke-dasharray="14 10"/>')
     out.append(f'<text x="{X(center)+8:.1f}" y="{y0+22}" fill="#14816b" font-family="monospace" font-size="17">{axis}=0</text>')
-    for x, y, _ in section:
+    for particle_index, (x, y, _) in zip(section_indices, section):
+        if particle_radii is not None:
+            out.append(_discharge_sphere_projection(particle_index, particle_radii, len(points), X(x), Y(y), scale))
         out.append(f'<circle cx="{X(x):.2f}" cy="{Y(y):.2f}" r="2.2" fill="#7d8da1" fill-opacity=".76"/>')
     for side, color, angle in (("left", "#d93535", result["left_angle_deg"]), ("right", "#276bd2", result["right_angle_deg"])):
         fitpts = result[f"{side}_fit_points"]
@@ -124,7 +145,7 @@ def write_svg_png(svg_path: Path, png_path: Path) -> None:
         raise RuntimeError(f"Chrome did not produce a valid PNG: {png_path}")
 
 
-def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_label: str, nbr_note: str) -> None:
+def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_label: str, nbr_note: str, *, particle_radii=None) -> None:
     """Render the confirmed three NBR-scaled physical cuts side by side in one SVG."""
     width, height = 1800, 1000
     navy, green, red, blue, orange = "#263449", "#14966c", "#d93535", "#276bd2", "#ef8c24"
@@ -150,7 +171,8 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
             normal_low, normal_high = section_center - half_width, section_center + half_width
         else:
             normal_low, normal_high = map(float, section_bounds)
-        all_cloud = [(float(p[hi]), float(p[1])) for p in points if normal_low <= float(p[ni]) <= normal_high]
+        section_indices = [i for i, p in enumerate(points) if normal_low <= float(p[ni]) <= normal_high]
+        all_cloud = [(float(points[i][hi]), float(points[i][1])) for i in section_indices]
         if not all_cloud:
             raise ValueError(f"no particles in discharge cut centered at {section_center}")
         centerline = float(section_result["centerline"])
@@ -184,11 +206,13 @@ def _write_discharge_three_cuts_svg(path: Path, points, result: dict, trial_labe
         out.append(f'<text x="{px+14}" y="{top+52}" fill="{navy}" font-family="monospace" font-size="12">CENTRO DEM X={section_center:+.3f} | MEIA-LARGURA NOMINAL={half_width_physical:.3f} M</text>')
         out.append(f'<text x="{px+14}" y="{top+72}" fill="{orange if clip_label else navy}" font-family="monospace" font-size="12">BANDA EFETIVA [{float(effective_band_physical[0]):+.3f},{float(effective_band_physical[1]):+.3f}] M{clip_label}</text>')
         out.append(f'<rect x="{left}" y="{plot_top}" width="{plot_w}" height="{plot_h}" fill="#f8fafc" stroke="{navy}" stroke-width="1.5"/>')
-        for x, y in cloud:
+        for particle_index, (x, y) in zip(section_indices, cloud):
             side = "left" if x < centerline else "right"
             is_basal_reference = y < cutoff_values[side]
             kind = "basal-reference" if is_basal_reference else "particle"
             opacity = ".16" if is_basal_reference else ".62"
+            if particle_radii is not None:
+                out.append(_discharge_sphere_projection(particle_index, particle_radii, len(points), X(x), Y(y), scale, is_basal_reference))
             out.append(f'<circle data-kind="{kind}" data-particle-y="{y:.9f}" data-cutoff-y="{cutoff_values[side]:.9f}" data-side="{side}" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="2.2" fill="#7d8da1" fill-opacity="{opacity}"/>')
         for side, color, is_left in (("left", red, True), ("right", blue, False)):
             cutoff_y = cutoff_values[side]
@@ -312,7 +336,10 @@ def write_discharge_failure_svg(
         X=lambda x:left+off_x+(float(x)-xmin)*scale
         Y=lambda y:plot_top+off_y+actual_h-(float(y)-ymin)*scale
         out.append(f'<rect x="{left}" y="{plot_top}" width="{plot_w}" height="{plot_h}" fill="#f8fafc" stroke="{navy}" stroke-width="1.5"/>')
-        for x,y in cloud:
+        visible_indices = [i for i in section_indices if not cutoff_values or float(points[i][1]) >= cutoff_values["left" if float(points[i][hi]) < centerline else "right"]]
+        for particle_index, (x, y) in zip(visible_indices, cloud):
+            if particle_radii is not None:
+                out.append(_discharge_sphere_projection(particle_index, particle_radii, len(points), X(x), Y(y), scale))
             out.append(f'<circle data-kind="particle" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="2.2" fill="#7d8da1" fill-opacity=".68"/>')
         if cutoff_values:
             for side, color, is_left in (("left", "#d93535", True), ("right", "#276bd2", False)):
@@ -335,10 +362,10 @@ def write_discharge_failure_svg(
     path.write_text("\n".join(out), encoding="utf-8")
 
 
-def write_repose_svg(path: Path, result: dict, trial_label: str, nbr_note: str = "NBR scaling per trial deck", points=None) -> None:
+def write_repose_svg(path: Path, result: dict, trial_label: str, nbr_note: str = "NBR scaling per trial deck", points=None, *, historical_preview=False) -> None:
     """Render paired radial repose faces, or the legacy eight-ray diagnostic."""
     if result.get("pair_profiles"):
-        return _write_repose_paired_svg(path, result, trial_label, nbr_note, points=points)
+        return _write_repose_paired_svg(path, result, trial_label, nbr_note, points=points, historical_preview=historical_preview)
     width, height = 1440, 1000
     navy, green, blue, orange = "#263449", "#14966c", "#276bd2", "#ef8c24"
     trial_title = re.sub(r"^TRIAL[_-]", "TRIAL ", trial_label.upper())
@@ -408,7 +435,7 @@ def write_repose_svg(path: Path, result: dict, trial_label: str, nbr_note: str =
     path.write_text("\n".join(out), encoding="utf-8")
 
 
-def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_note: str, points=None) -> None:
+def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_note: str, points=None, *, historical_preview=False) -> None:
     """Render four diametral views, each with both measured faces and the full particle cloud."""
     width, height = 1800, 1160
     navy, green, red, blue, orange = "#263449", "#14966c", "#d93535", "#276bd2", "#ef8c24"
@@ -421,12 +448,17 @@ def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_not
     if len(pairs) != 4:
         raise ValueError("the paired repose figure requires four diametral profiles")
     title = re.sub(r"^TRIAL[_-]", "TRIAL ", trial_label.upper())
+    candidate_method = result.get("profile_method") == "repose_horizontal_surface_consensus"
+    valid_faces = sum(profile.get("valid", True) for pair in pairs for profile in (pair["positive_profile"], pair["negative_profile"]))
+    summary_label = f"{valid_faces}/8 FACES COM AJUSTE VALIDO" if candidate_method else "8 FACES MEDIDAS INDIVIDUALMENTE"
+    axes_label = "EIXOS EXTERNOS DA SECAO" if candidate_method else "EIXOS VERTICAIS NAS BORDAS DAS BASES"
+    sampling_label = (f'PASSO EM Y: {float(result.get("height_band_factor",1.0)):.2f}xRAIO 3D MEDIANO' if candidate_method else f'1 PONTO/BANDA: {float(result.get("height_band_factor",2.0)):.2f}×RAIO MEDIANO')
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         '<rect width="100%" height="100%" fill="#f7f9fc"/>',
         f'<text x="48" y="46" fill="{navy}" font-family="monospace" font-size="32" font-weight="bold">{html.escape(title)} - REPOUSO</text>',
-        f'<text x="48" y="80" fill="{navy}" font-family="monospace" font-size="17">4 CORTES DIAMETRAIS | 8 FACES MEDIDAS INDIVIDUALMENTE | ANGULO DE CADA FACE RELATIVO A Y=0</text>',
-        f'<text x="48" y="108" fill="{navy}" font-family="monospace" font-size="15">EIXO CENTRAL (0,0) | EIXOS VERTICAIS NAS BORDAS DAS BASES | 1 PONTO/BANDA: {float(result.get("height_band_factor", 2.0)):.2f}×RAIO MEDIANO | INICIO: {float(result.get("minimum_height_particle_diameters", 0.0)):.1f} DIAMETROS ACIMA DA BASE</text>',
+        f'<text x="48" y="80" fill="{navy}" font-family="monospace" font-size="17">4 CORTES DIAMETRAIS | {summary_label} | ANGULO DE CADA FACE RELATIVO A Y=0</text>',
+        f'<text x="48" y="108" fill="{navy}" font-family="monospace" font-size="15">EIXO CENTRAL (0,0) | {axes_label} | {sampling_label} | CORTE HORIZONTAL: {float(result.get("minimum_height_particle_diameters", 0.0)):.1f} DIAMETROS; AJUSTE COMECA ACIMA DO CORTE</text>',
     ]
     margin_x, margin_y = 48, 132
     panel_w, panel_h, gap_x, gap_y = 840, 432, 24, 22
@@ -442,7 +474,7 @@ def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_not
         }
         # Keep the sub-cutoff bed visible but de-emphasized: it establishes the
         # basal reference/cutoff, while only the opaque profile points enter fits.
-        projected_cloud = [
+        projected_cloud = pair.get("section_projected_centers") or [
             ((float(x) - center_x) * cos_t + (float(z) - center_z) * sin_t, float(y))
             for x, y, z in cloud
         ]
@@ -471,11 +503,14 @@ def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_not
         out.append(f'<text x="{px+16}" y="{py+30}" fill="{navy}" font-family="monospace" font-size="17" font-weight="bold">CORTE DIAMETRAL {pair_index+1} - EIXO {float(pair["axis_angle_deg"]):.0f} GRAUS</text>')
         out.append(f'<rect x="{left}" y="{top}" width="{plot_w}" height="{plot_h}" fill="#f8fafc" stroke="{navy}" stroke-width="1.5"/>')
         out.append(f'<defs><clipPath id="repose-plot-clip-{pair_index}"><rect x="{left}" y="{top}" width="{plot_w}" height="{plot_h}"/></clipPath></defs>')
-        for x, y in projected_cloud:
+        section_radii = pair.get("section_particle_radii", [0.0] * len(projected_cloud))
+        for (x, y), sphere_radius in zip(projected_cloud, section_radii):
             side = "right" if x >= 0 else "left"
             is_basal_reference = y < profile_cutoffs[side]
             kind = "basal-reference" if is_basal_reference else "particle"
             opacity = ".16" if is_basal_reference else ".42"
+            if sphere_radius:
+                out.append(f'<circle data-kind="sphere-section" clip-path="url(#repose-plot-clip-{pair_index})" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="{sphere_radius*scale:.2f}" fill="#7d8da1" fill-opacity="{.04 if is_basal_reference else .07}" stroke="#7d8da1" stroke-opacity="{.12 if is_basal_reference else .4}" stroke-width="1"/>')
             out.append(f'<circle data-kind="{kind}" data-particle-y="{y:.9f}" data-cutoff-y="{profile_cutoffs[side]:.9f}" cx="{X(x):.2f}" cy="{Y(y):.2f}" r="1.7" fill="#7d8da1" fill-opacity="{opacity}"/>')
         out.append(f'<line x1="{X(0):.2f}" y1="{Y(ymin):.2f}" x2="{X(0):.2f}" y2="{Y(ymax):.2f}" stroke="#14816b" stroke-width="2.5" stroke-dasharray="10 7"/>')
         out.append(f'<line x1="{X(xmin):.2f}" y1="{Y(0):.2f}" x2="{X(xmax):.2f}" y2="{Y(0):.2f}" stroke="#14966c" stroke-width="3" stroke-dasharray="10 7"/>')
@@ -493,7 +528,7 @@ def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_not
             base_axis = float(base_axis)
             axis_base_y = float(profile.get("base", (base_axis, 0.0))[1])
             out.append(f'<line data-kind="toe-axis" x1="{X(base_axis):.2f}" y1="{Y(axis_base_y):.2f}" x2="{X(base_axis):.2f}" y2="{Y(ymax):.2f}" stroke="{orange}" stroke-width="2.5" stroke-dasharray="6 5"/>')
-            for x, y, z in profile.get("selected_particle_points", []):
+            for x, y, z in profile.get("selected_surface_points", profile.get("selected_particle_points", [])):
                 if float(y) < face_cutoff:
                     continue
                 projection = (float(x) - center_x) * cos_t + (float(z) - center_z) * sin_t
@@ -511,45 +546,69 @@ def _write_repose_paired_svg(path: Path, result: dict, trial_label: str, nbr_not
                 projection = (float(x) - center_x) * cos_t + (float(z) - center_z) * sin_t
                 cx, cy = X(projection), Y(y)
                 out.append(f'<path data-kind="outlier" data-particle-y="{float(y):.9f}" data-cutoff-y="{face_cutoff:.9f}" d="M {cx-5:.2f} {cy-5:.2f} L {cx+5:.2f} {cy+5:.2f} M {cx-5:.2f} {cy+5:.2f} L {cx+5:.2f} {cy-5:.2f}" stroke="{orange}" stroke-width="2.5"/>')
-            if result.get("profile_method") == "discharge_base_anchored_huber":
+            if result.get("profile_method") in {"discharge_base_anchored_huber", "repose_horizontal_surface_consensus"}:
                 base_h, base_y = profile["base"]
                 out.append(f'<circle data-kind="base" cx="{X(base_h):.2f}" cy="{Y(base_y):.2f}" r="6" fill="#ffd84d" stroke="{navy}" stroke-width="2"/>')
             data = profile.get("envelope", [])
-            if data:
+            face_valid = profile.get("valid", True)
+            if not face_valid:
+                trace_data = profile.get("profile_points", [])
+                trace = " ".join(f"{X(h):.2f},{Y(y):.2f}" for h,y in trace_data)
+                out.append(f'<polyline data-kind="selected-profile-trace" clip-path="url(#repose-plot-clip-{pair_index})" points="{trace}" fill="none" stroke="{green}" stroke-width="1.5" stroke-dasharray="3 4"/>')
+            if data and face_valid:
                 rmin, rmax = min(r for r, _ in data), max(r for r, _ in data)
                 slope, intercept = float(profile["slope"]), float(profile["intercept"])
-                base = profile.get("base")
-                if base is not None:
-                    rmin, rmax = min(rmin, abs(float(base[0]))), max(rmax, abs(float(base[0])))
-                out.append(f'<line data-kind="fit-{label}" clip-path="url(#repose-plot-clip-{pair_index})" x1="{X(sign*rmin):.2f}" y1="{Y(slope*rmin+intercept):.2f}" x2="{X(sign*rmax):.2f}" y2="{Y(slope*rmax+intercept):.2f}" stroke="{color}" stroke-width="4"/>')
-            angle = float(pair["positive_angle_deg"] if sign > 0 else pair["negative_angle_deg"])
+                # The fit may only be drawn from the horizontal cutoff upward.
+                if abs(slope) <= 1e-12:
+                    if intercept < face_cutoff:
+                        rmin, rmax = 1.0, 0.0
+                else:
+                    cutoff_radius = (face_cutoff - intercept) / slope
+                    if slope > 0:
+                        rmin = max(rmin, cutoff_radius)
+                    else:
+                        rmax = min(rmax, cutoff_radius)
+                if rmax >= rmin:
+                    out.append(f'<line data-kind="fit-{label}" data-cutoff-screen-y="{Y(face_cutoff):.2f}" clip-path="url(#repose-plot-clip-{pair_index})" x1="{X(sign*rmin):.2f}" y1="{Y(slope*rmin+intercept):.2f}" x2="{X(sign*rmax):.2f}" y2="{Y(slope*rmax+intercept):.2f}" stroke="{color}" stroke-width="4"/>')
+            angle = pair["positive_angle_deg"] if sign > 0 else pair["negative_angle_deg"]
+            angle_label = f"{float(angle):.2f} GRAUS" if face_valid else "SEM ANGULO VALIDO"
             label_x = px + 18 if sign > 0 else px + 430
             r2 = float(profile.get("r2", 0.0))
             support = int(profile.get("fit_support", len(data)))
             candidates = int(profile.get("candidate_count", support))
             downweighted_count = int(profile.get("downweighted_count", len(downweighted)))
-            out.append(f'<text x="{label_x}" y="{py+50}" fill="{color}" font-family="monospace" font-size="11" font-weight="bold">LADO {label}: {angle:.2f} GRAUS | R2 {r2:.2f} | {support}/{candidates} | PESO BAIXO {downweighted_count}</text>')
-        for gx, gy, gz in result.get("discarded_particle_points", []):
+            out.append(f'<text x="{label_x}" y="{py+50}" fill="{color}" font-family="monospace" font-size="11" font-weight="bold">LADO {label}: {angle_label} | R2 {r2:.2f} | {support}/{candidates} | EXCLUIDOS {downweighted_count}</text>')
+            if not face_valid:
+                reason = str(profile.get("rejection_reason", "perfil sem suporte"))
+                reason = {"surface does not lean inward with height":"FACE NAO RECUA COM A ALTURA", "insufficient unique particle support":"POUCAS PARTICULAS DISTINTAS", "unsupported height gap in profile":"LACUNA DE ALTURA SEM SUPORTE", "sustained unsupported middle profile":"DESVIO CONTINUO: PERFIL NAO LINEAR", "no majority-supported face":"SEM MAIORIA DE PONTOS COERENTES", "R2 below declared 0.90 face-quality gate":"AJUSTE ABAIXO DO LIMITE R2=0,90", "insufficient inlier support":"POUCOS PONTOS COERENTES"}.get(reason,reason)
+                out.append(f'<text data-kind="rejection-reason" x="{px+16}" y="{py+panel_h-44+(0 if sign>0 else 16)}" fill="#b42318" font-family="monospace" font-size="11">LADO {label}: {html.escape(reason)}</text>')
+        for gx, gy, gz in pair.get("section_discarded_particle_points", result.get("discarded_particle_points", [])):
             projection = (float(gx) - center_x) * cos_t + (float(gz) - center_z) * sin_t
             local_cutoff = profile_cutoffs["right" if projection >= 0 else "left"]
             if float(gy) < local_cutoff:
                 continue
             cx, cy = X(projection), Y(gy)
             out.append(f'<path data-kind="global-outlier" data-particle-y="{float(gy):.9f}" data-cutoff-y="{local_cutoff:.9f}" d="M {cx-5:.2f} {cy-5:.2f} L {cx+5:.2f} {cy+5:.2f} M {cx-5:.2f} {cy+5:.2f} L {cx+5:.2f} {cy-5:.2f}" stroke="{orange}" stroke-width="2.5"/>')
-        out.append(f'<text x="{left}" y="{top+plot_h+23}" fill="{navy}" font-family="monospace" font-size="12">DISTANCIA ASSINADA AO EIXO (DEM) | REFERENCIA HORIZONTAL Y=0</text>')
-        out.append(f'<text x="{px+16}" y="{py+panel_h-12}" fill="{navy}" font-family="monospace" font-size="13">MEDIA DO PAR: {float(pair["mean_angle_deg"]):.2f} GRAUS | SUPORTE +/−: {len(pair["positive_fit_points"])}/{len(pair["negative_fit_points"])}</text>')
-    angle_text = ", ".join(f"{float(angle):.2f}" for angle in result["direction_angles_deg"])
+        if pair["mean_angle_deg"] is not None:
+            out.append(f'<text x="{left}" y="{top+plot_h+23}" fill="{navy}" font-family="monospace" font-size="12">DISTANCIA ASSINADA AO EIXO (DEM) | REFERENCIA HORIZONTAL Y=0</text>')
+        pair_label = f'{float(pair["mean_angle_deg"]):.2f} GRAUS' if pair["mean_angle_deg"] is not None else 'SEM MEDIA VALIDA'
+        out.append(f'<text x="{px+16}" y="{py+panel_h-12}" fill="{navy}" font-family="monospace" font-size="13">MEDIA DO PAR: {pair_label} | SUPORTE +/−: {len(pair["positive_fit_points"])}/{len(pair["negative_fit_points"])}</text>')
+    angle_text = ", ".join(f"{float(angle):.2f}" if angle is not None else "INVALIDO" for angle in result["direction_angles_deg"])
     legend_text = (
-        "TODAS AS PARTICULAS: CINZA | SELECIONADAS: VERDE | BASES: AMARELO | "
-        "BASE ABAIXO DO CORTE: TRANSLUCIDA, USADA COMO REFERENCIA; NAO ENTRA NOS FITS | "
-        "RESIDUOS ALTOS: INCLUIDOS COM PESO MENOR (LARANJA) | FORA DO DOMINIO: X LARANJA"
-        if result.get("profile_method") == "discharge_base_anchored_huber"
-        else "TODAS AS PARTICULAS: CINZA | SELECIONADAS: VERDE | BASE ABAIXO DO CORTE: TRANSLUCIDA, USADA COMO REFERENCIA; NAO ENTRA NOS FITS | PONTOS REJEITADOS: LARANJA"
+        "NUVEM: CINZA | PERFIL: VERDE | BASE TRANSLUCIDA: REFERENCIA, FORA DO FIT | "
+        "RESIDUOS ALTOS: INCLUIDOS COM PESO MENOR (LARANJA) | FORA DOMINIO: X LARANJA"
+        if result.get("profile_method") in {"discharge_base_anchored_huber", "repose_horizontal_surface_free_intercept_huber"}
+        else "NUVEM: CINZA | PERFIL: VERDE | BASE TRANSLUCIDA: REFERENCIA, FORA DO FIT | REJEITADOS: X LARANJA"
     )
+    if result.get("profile_method") == "repose_horizontal_surface_consensus":
+        legend_text = "CINZA: ESFERAS DA SECAO | VERDE: SUPERFICIE POR ALTURA | X LARANJA: EXCLUIDOS DO FIT | BASE TRANSLUCIDA: FORA DO FIT"
+    mean_label = (f'MEDIA GLOBAL: {float(result["mean_angle_deg"]):.2f} GRAUS | DESVIO ENTRE 8 LADOS: {float(result.get("stddev_deg",0.0)):.2f} GRAUS' if result["mean_angle_deg"] is not None else 'SEM MEDIA GLOBAL: EXISTEM FACES SEM ANGULO VALIDO; NAO USAR NO OBJETIVO')
+    provenance_label = "PREVIA DE DUMP HISTORICO; REPROCESSAMENTO SOMENTE LEITURA" if historical_preview else "MEDICAO DO TRIAL"
     out.extend([
-        f'<text x="48" y="1040" fill="{navy}" font-family="monospace" font-size="18" font-weight="bold">MEDIA GLOBAL: {float(result["mean_angle_deg"]):.2f} GRAUS | DESVIO ENTRE 8 LADOS: {float(result.get("stddev_deg",0.0)):.2f} GRAUS</text>',
+        f'<text x="48" y="1040" fill="{navy}" font-family="monospace" font-size="18" font-weight="bold">{mean_label}</text>',
         f'<text x="48" y="1068" fill="{navy}" font-family="monospace" font-size="14">8 ANGULOS INDIVIDUAIS: {angle_text} GRAUS</text>',
-        f'<text x="48" y="1096" fill="#536477" font-family="monospace" font-size="13">{html.escape(legend_text)} | ORIGEM/EIXO: (0,0) | NBR: {html.escape(nbr_note)}</text>',
+        f'<text x="48" y="1096" fill="#536477" font-family="monospace" font-size="13">{html.escape(legend_text)}</text>',
+        f'<text x="48" y="1122" fill="#536477" font-family="monospace" font-size="13">{provenance_label} | ORIGEM/EIXO: (0,0) | NBR: {html.escape(nbr_note)}</text>',
         '</svg>',
     ])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -644,7 +703,7 @@ def write_repose_cutoff_diagnostic_svg(path: Path, points, trial_label: str, min
     path.write_text("\\n".join(out), encoding="utf-8")
 
 
-def write_repose_failure_diagnostic_svg(path: Path, points, trial_label: str, reason: str) -> None:
+def write_repose_failure_diagnostic_svg(path: Path, points, trial_label: str, reason: str, particle_radii=None) -> None:
     """Render a failed repose snapshot in the standard four-cut layout, without inventing a fit."""
     width, height = 1800, 1160
     navy, gray, red = "#263449", "#718096", "#b42318"
@@ -661,7 +720,8 @@ def write_repose_failure_diagnostic_svg(path: Path, points, trial_label: str, re
         px, py = 48 + (idx % 2) * 864, 132 + (idx // 2) * 442
         theta = math.radians(angle)
         c, s = math.cos(theta), math.sin(theta)
-        section = [(float(x) * c + float(z) * s, float(y)) for x, y, z in points]
+        section = [(float(x) * c + float(z) * s, float(y)) for index,(x,y,z) in enumerate(points)
+                   if particle_radii is None or abs(-float(x)*s+float(z)*c) < float(particle_radii[index])]
         xmin = min([x for x, _ in section] + [0.0]); xmax = max([x for x, _ in section] + [0.0])
         ymin = min([y for _, y in section] + [0.0]); ymax = max([y for _, y in section] + [0.0])
         padx = max((xmax - xmin) * .08, 1e-9); pady = max((ymax - ymin) * .08, 1e-9)

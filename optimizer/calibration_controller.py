@@ -556,13 +556,16 @@ class CalibrationController:
         trial_dir = path.parents[2]
         trial_label = trial_dir.name
 
-        def save_diagnostic(reason: str) -> None:
+        def save_diagnostic(reason: str, measurement_diagnostic=None) -> None:
             axis = "z" if kind == "discharge" else "radial"
             output = trial_dir / ("medicao_descarga_diagnostico.svg" if kind == "discharge" else "medicao_repouso_diagnostico.svg")
             try:
                 if kind == "repose":
                     output = trial_dir / "medicao_repouso_diagnostico.svg"
-                    write_repose_failure_diagnostic_svg(output, points, trial_label, reason)
+                    if measurement_diagnostic is not None:
+                        write_repose_svg(output, measurement_diagnostic, trial_label, "medicao rejeitada; perfil diagnostico", points=points, historical_preview=False)
+                    else:
+                        write_repose_failure_diagnostic_svg(output, points, trial_label, reason, particle_radii=radii)
                 else:
                     output = trial_dir / "medicao_descarga.svg"
                     ratio = self._nbr_ratio_from_deck(path.parents[1] / "in.deslizamento")
@@ -606,7 +609,7 @@ class CalibrationController:
                 diagnostic = GeometryDiagnostic(
                     f"{kind} angle unavailable: profile is not a reliable repose face; cohesive bridge/arching suspected, not confirmed: {exc}"
                 )
-            save_diagnostic(str(diagnostic))
+            save_diagnostic(str(diagnostic), getattr(exc, "diagnostic_result", None))
             raise diagnostic from exc
         except ValueError as exc:
             diagnostic = MeasurementRejected(f"{kind} measurement rejected: {exc}")
@@ -616,12 +619,12 @@ class CalibrationController:
         if kind == "discharge":
             svg_path = trial_dir / "medicao_descarga.svg"
             png_path = trial_dir / "medicao_descarga.png"
-            write_discharge_svg(svg_path, points, result, trial_label, nbr_note)
+            write_discharge_svg(svg_path, points, result, trial_label, nbr_note, particle_radii=radii)
             write_svg_png(svg_path, png_path)
         else:
             svg_path = trial_dir / "medicao_repouso_oito_direcoes.svg"
             png_path = trial_dir / "medicao_repouso_oito_direcoes.png"
-            write_repose_svg(svg_path, result, trial_label, nbr_note, points=points)
+            write_repose_svg(svg_path, result, trial_label, nbr_note, points=points, historical_preview=False)
             write_svg_png(svg_path, png_path)
         return result
 
