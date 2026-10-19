@@ -1,5 +1,5 @@
 {
-  "calibration_name": "doe_repouso40_deslizamento73p4_20261007",
+  "calibration_name": "repouso_abertura_sequencial",
   "target_discharge_deg": 73.4,
   "target_repose_deg": 40.0,
   "tolerance_deg": 0.5,
@@ -17,8 +17,8 @@
   "validation_trials": 15,
   "max_trials": 108,
   "cohesion_guard": {
-    "enabled": true,
-    "max_boundary_probes": 8
+    "enabled": false,
+    "reason": "No authorized cohesion-bound change for this newly supplied protocol."
   },
   "model_candidate_pool": 6000,
   "random_seed": 86028157,
@@ -55,8 +55,23 @@
       "CED11"
     ]
   },
-  "optimization_mode": "joint_two_tests_per_trial",
+  "optimization_mode": "one_sequential_case_two_snapshots",
   "method": "DOE Latin Hypercube com modelo quadrático, refinamento e validação independente; fila contínua que repõe cada worker assim que um trial termina.",
-  "article_adaptation": "Inputs fornecidos pelo usuário: deslizamento no V e ângulo de repouso. rf12 permanece fixo em 1.0. Fatores DOE: sf11, rf11 e CED11. Contagens preservadas da campanha anterior: 45 DOE, 48 refinamento, 15 validação.",
-  "mpi_processes": 1
+  "article_adaptation": "Original sequential Jenike deck. Repose unchanged; one central projected slab preserves previous discharge observation half-width. Arc-surface contour, geometric-consensus free-intercept line; not a claimed literal Muller replication.",
+  "mpi_processes": 1,
+  "protocol": "repose_then_base_opening",
+  "source_case_directory": "Ang Repouso e Desgarga",
+  "source_input": "in.repousodesgarga",
+  "measurement": {
+    "discharge_plane": "ZY",
+    "plane_x_sim": 0.0,
+    "slice_method": "central_slab_projection",
+    "section_half_width_physical_m": 0.075,
+    "height_band_factor": 0.25,
+    "minimum_height_particle_diameters": 0.0,
+    "face": "inner_toward_opening"
+  },
+  "targets_origin": "Henrique confirmed Jenike inner face toward gap and targets40/73.4 in this conversation.",
+  "targets_protocol_confirmed": true,
+  "measurement_approved": false
 }

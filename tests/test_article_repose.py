@@ -92,14 +92,13 @@ endsolid
             with self.assertRaisesRegex(GeometryDiagnostic, "bridge/arching suspected"):
                 controller._measure_snapshot(snapshot, "discharge")
 
-    def test_sliding_measurement_uses_final_10s_snapshot(self):
-        deck = (PROJECT / "Ang Deslizamento" / "in.deslizamento").read_text(encoding="utf-8")
-        final_flow = deck.index("run ${steps_finais}")
-        snapshot = deck.index("post/deslizamento_final.vtk")
-        self.assertGreater(snapshot, final_flow)
-        controller = (PROJECT / "optimizer" / "calibration_controller.py").read_text(encoding="utf-8")
-        self.assertIn("post/deslizamento_final.vtk", controller)
-        self.assertNotIn("deslizamento_apos_remocao_base.vtk", controller)
+    def test_sequential_opening_snapshots_preserve_user_phase_order(self):
+        from optimizer.opening_protocol import inspect_case,CASE_DIRECTORY,INPUT_NAME
+        deck=(PROJECT/CASE_DIRECTORY/INPUT_NAME).read_text(encoding='utf-8')
+        repose_dump=deck.index('post/repouso_final.vtk')
+        self.assertLess(repose_dump,deck.index('fix move_base_esq'))
+        self.assertGreater(deck.index('post/descarga_final.vtk'),deck.index('run ${steps_pos_descarga}'))
+        self.assertEqual(inspect_case(PROJECT/CASE_DIRECTORY)['snapshot_times_s'],{'repose':13.0,'discharge':23.0})
 
     def test_repose_surface_profiles_use_each_particle_radius(self):
         angle_deg = 30.0

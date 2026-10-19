@@ -133,7 +133,7 @@ class ReposeSurfaceRegressionTests(unittest.TestCase):
         self.assertGreater(result['r2'],0.0)
         self.assertLess(result['r2'],0.90)
         self.assertFalse(result['valid'])
-        self.assertIn('R2',result['rejection_reason'])
+        self.assertIn('orthogonal residual',result['rejection_reason'])
 
     def test_missing_height_range_cannot_be_bridged_as_a_supported_face(self):
         from optimizer.repose_profile import fit_repose_profile

@@ -1,7 +1,7 @@
 ###################################Header for General commands#######################################################
 
 atom_style    granular # define partículas granulares
-atom_modify   map array # otimiza mapeamento dos átomos
+atom_modify   map array	# otimiza mapeamento dos átomos
 boundary      f f f # fronteiras fixas nas três direções
 units         si # usa unidades SI
 communicate   single vel yes # comunica velocidades entre processadores
@@ -12,21 +12,20 @@ processors    1 1 1 # 1 MPI rank per independent trial; 12 trials use 12 visible
 
 ###################################System variables##################################################################
 
-variable    xmin    index    -0.5 # limite mínimo em x
-variable    xmax    index     0.5 # limite máximo em x
+variable    xmin    index    -1.0 # limite mínimo em x
+variable    xmax    index     1.0 # limite máximo em x
 
-variable    ymin    index     0.99 # limite mínimo em y
-variable    ymax    index     5.0 # limite máximo em y
+variable    ymin    index    -0.02 # limite mínimo em y (logo abaixo da base para eliminar partículas que caem)
+variable    ymax    index     2.5 # limite máximo em y
 
-variable    zmin    index    -0.5 # limite mínimo em z
-variable    zmax    index     0.5 # limite máximo em z
+variable    zmin    index    -1. # limite mínimo em z
+variable    zmax    index     1. # limite máximo em z
 
 variable dt equal 1e-4 # passo de tempo da simulação
 
 # Fórmula para aproximar dt
 # dt = 0.2 * (pi * R * sqrt(rho / (Y / (2 * (1 + nu))))) / (0.1631 * nu + 0.8766)
 # dt: timestep (s) | R: menor raio (m) | rho: densidade (kg/m3) | Y: Módulo de Young (Pa) | nu: Poisson
-
 
 ###################################Variáveis específicas da simulação################################################
 
@@ -71,7 +70,7 @@ variable 	CoR44 equal 0.1
 #### Sliding friction coefficient ####
 #Alterar apenas os valores numéricos (lembre-se que alguns termos são simétricos)#
 
-variable	sf11	index	0.5 #DOE factor; source baseline from uploaded Ang Deslizamento.zip
+variable	sf11	index	0.5 #DOE factor; source baseline from uploaded Ang Repouso.zip
 variable	sf12	equal	0.45 #interação particula-superficie: dados advindos da calibração "parede"  na calibração histórica / 
 variable	sf13	equal	0.45 #interação particula-particula: dados advindos da calibração "parede"  na calibração histórica / 
 variable	sf14	equal	0.0
@@ -91,7 +90,7 @@ variable	sf44	equal	0.0
 #### Rolling friction coefficient ####
 #Alterar apenas os valores numéricos (lembre-se que alguns termos são simétricos)#
 
-variable	rf11	index	0.8 #DOE factor; source baseline from uploaded Ang Deslizamento.zip
+variable	rf11	index	0.8 #DOE factor; source baseline from uploaded Ang Repouso.zip
 variable	rf12	equal	1.0 #interação particula-superficie: dados advindos da calibração "parede"
 variable	rf13	equal	1.0 #interação particula-superficie: dados advindos da calibração "parede"
 variable	rf14	equal	0.0
@@ -111,7 +110,7 @@ variable	rf44	equal	0.0
 ####cohesivity energy density####	
 #Alterar apenas os valores numéricos (lembre-se que alguns termos são simétricos)#
 					
-variable	CED11	index	1000 #DOE factor; source baseline from uploaded Ang Deslizamento.zip
+variable	CED11	index	1000 #DOE factor; source baseline from uploaded Ang Repouso.zip
 variable	CED12	equal	0
 variable	CED13	equal	0
 variable	CED14	equal	0.0			
@@ -133,7 +132,7 @@ variable	CED44	equal	0.0
 
 ### SEMPRE COLOCAR DO MENOR RAIO PARA O MAIOR!!!!!
 
-variable radiusnbr equal 0.0065/2 #Tamanho otimizado
+variable radiusnbr equal 0.004 #Tamanho otimizado
 
 variable nradii equal 7
 
@@ -160,21 +159,37 @@ variable nbrratio equal v_radius1/v_radiusnbr # razão das partículas para o va
 
 #### Parâmetros de alimentação do sistema ####
 
-variable    simulationtime        equal    15 # duração máxima fixa; paragem por energia cinética não validada
-variable    filltime              equal    1 # tempo de alimentação
-variable    fillmassrateth        equal    3.6*0.02*0.58*v_density*v_nbrratio*v_nbrratio*v_nbrratio # vazão mássica escalada em t/h
-variable    fillmassrate          equal    ${fillmassrateth}/3.6 # vazão mássica em kg/s
-variable    fillmass              equal    ${filltime}*${fillmassrate} # massa total inserida
-variable    fillsteps             equal    ${filltime}/${dt} # passos de alimentação
-variable    simulationsteps       equal    ${simulationtime}/${dt} # passos totais da simulação
+variable simulationtime equal 23.0 # tempo total da simulação
+variable filltime equal 1.0 # tempo de alimentação das partículas
+variable fillmassrateth equal 0.008*0.58*v_density*v_nbrratio*v_nbrratio*v_nbrratio # vazão mássica escalada em t/h
+variable fillmassrate equal ${fillmassrateth}/3.6 # vazão mássica convertida para kg/s
+variable fillmass equal ${filltime}*${fillmassrate} # massa total inserida durante a alimentação
+variable fillsteps equal ${filltime}/${dt} # número de passos da alimentação
 
 #### Movimentos ####
 
-variable tempo_remocao_base equal 3 # instante em que a base será removida da simulação
+variable v_mov equal 0.025*v_nbrratio # velocidade comum do tubo
 
-variable steps_ate_remocao_base equal round((v_tempo_remocao_base-v_filltime)/v_dt) # passos entre o fim da alimentação e a remoção da base
 
-variable steps_finais equal round((v_simulationtime-v_tempo_remocao_base)/v_dt) # passos entre a remoção da base e o fim da simulação
+### Movimento ###
+
+variable tempo_inicio_subida_tubo equal 3.0 # instante de início da subida do tubo
+variable desloc_tubo_y equal 10.0*v_v_mov # deslocamento do tubo durante 10 segundos
+variable v_tubo_y equal v_v_mov # velocidade do tubo no sentido positivo de Y
+variable tempo_subida_tubo equal v_desloc_tubo_y/v_v_tubo_y # duração da subida do tubo
+variable tempo_fim_subida_tubo equal v_tempo_inicio_subida_tubo+v_tempo_subida_tubo # instante final da subida do tubo
+variable steps_ate_subida_tubo equal (v_tempo_inicio_subida_tubo-v_filltime)/v_dt # passos entre o fim da alimentação e o início da subida
+variable steps_tubo_subida equal v_tempo_subida_tubo/v_dt # número de passos da subida do tubo
+
+#### Movimento das Bases (Ângulo de Descarga) ####
+
+variable v_base_z equal ${v_mov} # velocidade horizontal das bases no eixo Z
+
+variable tempo_mov_base equal 3.0                              # tempo de movimento das bases (3 segundos)
+variable steps_mov_base equal ${tempo_mov_base}/${dt}          # passos de tempo para os 3s de abertura
+
+variable tempo_repouso_pos_descarga equal 7.0                  # 7s para o material parar de escorrer
+variable steps_pos_descarga equal ${tempo_repouso_pos_descarga}/${dt}
 
 
 ###################################Definition of simulation box#######################################################
@@ -187,16 +202,15 @@ neighbor ${neighborskin} bin
 neigh_modify delay 0 every 1 check yes one 10000 page 100000
 
 
-###*###############################Contact Models - Cohesion SJКR #######*##################################*#######
+###################################Contact Models###################################################
 
-pair_style gran model hertz tangential history cohesion sjkr rolling_friction epsd2 tangential_reduce on
+pair_style gran model hertz tangential history cohesion sjkr rolling_friction epsd2
 
 pair_coeff * * # aplica modelo a todos os pares
 
 timestep ${dt} # define passo de tempo
 
 fix integrator all nve/sphere # integra movimento das esferas
-
 fix gravi all gravity 9.81 vector 0.0 -1.0 0.0 # aplica gravidade em y negativo
 
 fix ts_check all check/timestep/gran 1000 0.1 0.1
@@ -214,15 +228,17 @@ fix m4 all property/global coefficientFriction peratomtypepair ${natoms} ${sf11}
 
 fix m5 all property/global coefficientRollingFriction peratomtypepair ${natoms} ${rf11} ${rf12} ${rf13} ${rf14} ${rf21} ${rf22} ${rf23} ${rf24} ${rf31} ${rf32} ${rf33} ${rf34} ${rf41} ${rf42} ${rf43} ${rf44} # define atrito de rolamento
 
-fix m6 all property/global cohesionEnergyDensity peratomtypepair ${natoms} ${CED11} ${CED12} ${CED13} ${CED14} ${CED21} ${CED22} ${CED23} ${CED24} ${CED31} ${CED32} ${CED33} ${CED34} ${CED41} ${CED42} ${CED43} ${CED44}
+fix m6 all property/global cohesionEnergyDensity peratomtypepair ${natoms} ${CED11} ${CED12} ${CED13} ${CED14} ${CED21} ${CED22} ${CED23} ${CED24} ${CED31} ${CED32} ${CED33} ${CED34} ${CED41} ${CED42} ${CED43} ${CED44} # define energia de coesão
 
 ###################################Generation and Loading of the Geometry .stl#######################################
 
-fix base         all mesh/surface file meshes/base.stl         type 4 scale $(v_nbrratio)
-fix box          all mesh/surface file meshes/box.stl          type 2 scale $(v_nbrratio)
-fix paredes      all mesh/surface file meshes/walls.stl        type 4 scale $(v_nbrratio)
+fix tubo all mesh/surface file meshes/tubo.stl type 4 scale $(1.5*v_nbrratio) # carrega a geometria do tubo
 
-fix walls all wall/gran model hertz tangential history cohesion sjkr rolling_friction epsd2 mesh n_meshes 3 meshes base box paredes tangential_reduce on # aplica o contato inicial à base, à caixa e às paredes
+fix base_repouso_esq all mesh/surface file meshes/base_repouso_esq.stl type 2 scale $(0.4*v_nbrratio) # carrega a metade esquerda da base
+
+fix base_repouso_dir all mesh/surface file meshes/base_repouso_dir.stl type 2 scale $(0.4*v_nbrratio) # carrega a metade direita da base
+
+fix walls all wall/gran model hertz tangential history cohesion sjkr rolling_friction epsd2 mesh n_meshes 3 meshes tubo base_repouso_esq base_repouso_dir
 
 ###################################Generation and Insertion of the particles#########################################
 
@@ -242,9 +258,9 @@ fix pts7 all particletemplate/sphere 20996011 atom_type 1 density constant ${den
 
 fix pdd1 all particledistribution/discrete 86028121 ${nradii} pts1 ${frac1} pts2 ${frac2} pts3 ${frac3} pts4 ${frac4} pts5 ${frac5} pts6 ${frac6} pts7 ${frac7}
 
-fix    ins_mesh all mesh/surface/planar file meshes/inlet.stl type 1 scale $(v_nbrratio) # carrega superfície de inserção
+fix ins_mesh all mesh/surface/planar file meshes/inlet.stl type 1 scale $(1.5*v_nbrratio)
 
-fix ins all insert/stream seed 86028157 distributiontemplate pdd1 mass ${fillmass} massrate ${fillmassrate} overlapcheck yes all_in yes vel constant 0 -1 0 insertion_face ins_mesh extrude_length $(1*v_nbrratio) # insere partículas por fluxo
+fix ins all insert/stream seed 86028157 distributiontemplate pdd1 mass ${fillmass} massrate ${fillmassrate} overlapcheck yes all_in yes vel constant 0 -1 0 insertion_face ins_mesh extrude_length $(1*v_nbrratio)
 
 
 ###################################Dumping of the data for post-processing to visualize##############################
@@ -253,28 +269,38 @@ shell "mkdir -p post"
 
 thermo 1000 # grava o progresso a cada 0,1 s
 thermo_style custom step time atoms ke # envia Step, Time, Atoms e energia cinética ao log
+thermo_modify lost ignore # descarta partículas que saírem da caixa sem abortar a simulação
 
-# No time-series STL dumps: the controller derives the scaled box bounds from this trial's source mesh/deck.
-# The single particle snapshot used for measurement is written after the final run below.
+variable dumptime equal 0.1
+variable dumpstep equal ${dumptime}/${dt} # número de passos entre arquivos de saída
+
 
 ####################################RUN the simulation###############################################################
 
 run ${fillsteps} # executa a alimentação das partículas de 0 a 1 segundo
 
-unfix ins # encerra a inserção de novas partículas
+unfix ins # encerra a inserção das partículas
 
-unfix ins_mesh # remove a malha de inserção, pois ela não será mais utilizada
+run ${steps_ate_subida_tubo} # mantém o sistema parado de 1 a 3 segundos
 
-run ${steps_ate_remocao_base} # mantém o sistema em repouso de 1 a 3 segundos com a base presente
+fix move_tubo all move/mesh mesh tubo linear 0.0 ${v_tubo_y} 0.0 # inicia a subida do tubo no sentido positivo de Y
 
-unfix walls # remove temporariamente o contato com a base, a caixa e as paredes
+run ${steps_tubo_subida} # movimenta o tubo de 3 a 13 segundos
 
-unfix base # remove definitivamente a malha da base no instante de 3 segundos
+unfix move_tubo # encerra o movimento do tubo em 13 segundos
 
-fix walls all wall/gran model hertz tangential history cohesion sjkr rolling_friction epsd2 mesh n_meshes 2 meshes box paredes tangential_reduce on # recria o contato somente com a caixa e as paredes
+write_dump all custom/vtk post/repouso_final.vtk id type x y z vx vy vz omegax omegay omegaz radius mass # snapshot da pilha de repouso formada
 
+fix move_base_esq all move/mesh mesh base_repouso_esq linear 0.0 0.0 -${v_base_z} # inicia o movimento da base esquerda no sentido negativo de Z
 
+fix move_base_dir all move/mesh mesh base_repouso_dir linear 0.0 0.0 ${v_base_z} # inicia o movimento da base direita no sentido positivo de Z
 
-run ${steps_finais} # executa o escoamento e a acomodação das partículas de 3 a 15 segundos sem a base
+run ${steps_mov_base} # movimenta as bases por 3 segundos
 
-write_dump all custom/vtk post/deslizamento_final.vtk id type x y z vx vy vz omegax omegay omegaz radius mass # snapshot final medido pelo controlador
+unfix move_base_esq # encerra o movimento da base esquerda
+
+unfix move_base_dir # encerra o movimento da base direita
+
+run ${steps_pos_descarga} # mantém o sistema parado para estabilizar o material restante
+
+write_dump all custom/vtk post/descarga_final.vtk id type x y z vx vy vz omegax omegay omegaz radius mass # snapshot final para medição do ângulo de descarga

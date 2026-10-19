@@ -147,9 +147,42 @@ def fit_repose_profile(points, median_radius, particle_indices=None, residual_li
             current = []
     if current:
         runs.append(current)
-    sustained = any(len({ids[i] for i in run}) >= 3 or
-                    (len({ids[i] for i in run}) >= 2 and samples[run[-1]][1]-samples[run[0]][1] >= 4*median_radius)
-                    for run in runs)
+    # Distinct particles alone do not establish sustained geometry: several
+    # sphere caps can switch within one radius of physical height (real trial26).
+    # Both independent support AND physical extent are required. Endpoint runs
+    # are retained explicitly; they are not mislabeled as middle departures.
+    departure_runs = []
+    for run in runs:
+        distinct = len({ids[i] for i in run})
+        span_radii = (samples[run[-1]][1]-samples[run[0]][1])/median_radius
+        min_residual_radii = min(errors[i]/median_radius for i in run)
+        signed_residuals = [samples[i][0]-intercept_h-gradient*samples[i][1] for i in run]
+        same_side = min(signed_residuals)*max(signed_residuals) > 0
+        # Test contiguous high-residual, same-sign subruns so an adjacent
+        # moderate shoulder or opposite-sign outlier cannot mask a large step.
+        large_step = False
+        step = []
+        for i, residual in zip(run, signed_residuals):
+            if errors[i]/median_radius < 4.0-1e-10:
+                step = []
+                continue
+            if step and residual*(samples[step[-1]][0]-intercept_h-gradient*samples[step[-1]][1]) <= 0:
+                step = []
+            step.append(i)
+            if (len({ids[j] for j in step}) >= 3 and
+                    (samples[step[-1]][1]-samples[step[0]][1])/median_radius >= 2.0-1e-10):
+                large_step = True
+                break
+        departure_runs.append({
+            'start_index': run[0], 'end_index': run[-1],
+            'location': ('lower_endpoint' if run[0] == 0 else
+                         'upper_endpoint' if run[-1] == len(samples)-1 else 'middle'),
+            'distinct_particles': distinct, 'height_span_radii': span_radii,
+            'minimum_orthogonal_residual_radii': min_residual_radii,
+            'same_signed_departure': same_side, 'large_coherent_step': large_step,
+            'sustained': (distinct >= 2 and span_radii >= 4.0-1e-10) or large_step,
+        })
+    sustained = any(run['sustained'] for run in departure_runs)
     height_gap = any(b[1]-a[1] > 4*median_radius+1e-10 for a,b in zip(samples,samples[1:]))
     mean_y = sum(w*y for (h,y),w in zip(samples,weights))/sum(weights)
     ss_tot = sum(w*(y-mean_y)**2 for (h,y),w in zip(samples,weights))
@@ -160,12 +193,46 @@ def fit_repose_profile(points, median_radius, particle_indices=None, residual_li
     inlier_ss_res = sum(w*(y-(slope*h+intercept))**2 for (h,y),w in zip(inlier_points,inlier_weights))
     inlier_r2 = 1-inlier_ss_res/inlier_ss_tot if inlier_ss_tot else 0.0
     unique_support = len({index for index,keep in zip(ids,mask) if keep})
+    # Keep the approved free-intercept h(y) refit unchanged. Geometry quality
+    # uses distances to that same line, rather than inverting it and judging
+    # y residuals (ill-conditioned for near-vertical profiles).
+    inlier_mass = sum(inlier_weights)
+    orthogonal_mse = sum(w*error*error for w,error,keep in zip(weights,errors,mask) if keep)/inlier_mass
+    orthogonal_rms_radii = math.sqrt(orthogonal_mse)/median_radius
+    tangent_coordinates = [(gradient*h+y)/math.hypot(1,gradient) for h,y in inlier_points]
+    tangent_mean = sum(w*t for w,t in zip(inlier_weights,tangent_coordinates))/inlier_mass
+    tangent_variance = sum(w*(t-tangent_mean)**2 for w,t in zip(inlier_weights,tangent_coordinates))/inlier_mass
+    orthogonal_quality = 1-orthogonal_mse/tangent_variance if tangent_variance > 1e-20 else 0.0
+    vertical_span_radii = (max(y for h,y in inlier_points)-min(y for h,y in inlier_points))/median_radius
+    fitted_horizontal_span_radii = abs(gradient)*vertical_span_radii
+    policy = {
+        'version': 'repose-geometric-quality-v1',
+        'r2_y_on_h_role': 'diagnostic_only',
+        'minimum_unique_particles': 5,
+        'minimum_vertical_span_radii': 4.0,
+        'minimum_fitted_horizontal_span_radii': 2.0,
+        'maximum_orthogonal_rms_radii': 1.0,
+        'minimum_orthogonal_quality': 0.90,
+        'maximum_unsupported_gap_radii': 4.0,
+        'minimum_departure_distinct_particles': 2,
+        'minimum_departure_height_span_radii': 4.0,
+        'large_coherent_step_minimum_particles': 3,
+        'large_coherent_step_minimum_height_span_radii': 2.0,
+        'large_coherent_step_minimum_orthogonal_residual_radii': 4.0,
+        'refit': 'free_intercept_weighted_horizontal_on_height_unchanged',
+        'weighting': 'physical_height_trapezoidal_cells',
+        'excluded_sample_weight': 0.0,
+        'threshold_provenance': 'candidate engineering policy; not a universal physical standard',
+    }
     reason = ('unstable surface consensus' if not converged else
               'insufficient unique particle support' if unique_support < 5 else
               'unsupported height gap in profile' if height_gap else
-              'sustained unsupported middle profile' if sustained else
-              'no majority-supported face' if sum(w for w,keep in zip(weights,mask) if keep) <= sum(weights)/2 else
-              'R2 below declared 0.90 face-quality gate' if inlier_r2 < 0.90 else '')
+              'sustained unsupported profile departure' if sustained else
+              'no majority-supported face' if inlier_mass <= sum(weights)/2 else
+              'insufficient physical height support' if vertical_span_radii < 4.0 else
+              'near-vertical profile lacks resolved horizontal retreat' if fitted_horizontal_span_radii < 2.0 else
+              'orthogonal residual exceeds particle-scale quality limit' if orthogonal_rms_radii > 1.0 else
+              'insufficient dimensionless orthogonal line quality' if orthogonal_quality < 0.90 else '')
     return {'slope':slope, 'intercept':intercept,
             'angle_deg':abs(math.degrees(math.atan(slope))),
             'r2':inlier_r2, 'all_samples_r2':1-ss_res/ss_tot if ss_tot else 0.0,
@@ -173,4 +240,14 @@ def fit_repose_profile(points, median_radius, particle_indices=None, residual_li
             'inlier_mask':mask, 'inlier_points':inlier_points,
             'downweighted_points':downweighted,
             'orthogonal_residuals':errors,
+            'orthogonal_rms_radii': orthogonal_rms_radii,
+            'orthogonal_quality': orthogonal_quality,
+            'orthogonal_quality_definition': '1 - weighted perpendicular MSE / weighted tangential variance',
+            'vertical_span_radii': vertical_span_radii,
+            'fitted_horizontal_span_radii': fitted_horizontal_span_radii,
+            'validity_policy': policy,
+            'fit_sample_weights': [w if keep else 0.0 for w,keep in zip(weights,mask)],
+            'excluded_sample_semantics': 'zero fit weight; downweighted_points is a legacy alias, not Huber',
+            'departure_runs': departure_runs,
+            'sustained_departure_policy': {'minimum_distinct_particles': 2, 'minimum_height_span_radii': 4.0},
             'horizontal_gradient':gradient, 'horizontal_intercept':intercept_h}

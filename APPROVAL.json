@@ -1,0 +1,22 @@
+{
+  "approved_at_recorded": "2026-10-18T22:27:14.220619-03:00",
+  "user_statement": "Ficou TOP, salva no drive no git e tá perfeito",
+  "scope": "visual measurement approval and saving to Drive/Git only; no optimization launch",
+  "discharge": {
+    "lower_cutoff_particle_diameters": 0,
+    "single_central_ZY_slab_halfwidth_m": 0.075,
+    "mean_deg": 49.98689479786712,
+    "left_deg": 49.16391039252694,
+    "right_deg": 50.809879203207316
+  },
+  "repose_and_physical_inputs_unchanged": true,
+  "tests": {
+    "run": 124,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 1
+  },
+  "branch": "repouso-abertura",
+  "legacy_branch_preserved": "main",
+  "preview_sha256": "e2651cbbdaa58b72d0becf3d4fbe22324444cc35fbc0d31039aec83efc253dc3"
+}

@@ -1,0 +1,80 @@
+{
+  "revision": "fullheight_no_lower_cut",
+  "source": "C:/DEM/Otimiza\u00e7\u00e3o Repouso e Abertura",
+  "scope": [
+    "discharge lower cutoff zero",
+    "same surface-consensus backend with full-height domain",
+    "repose-standard single-panel figure",
+    "crest cap samples visible but not fit support"
+  ],
+  "real_saved_dump_only": true,
+  "no_solver_executed": true,
+  "no_campaign_started": true,
+  "repose_unchanged": true,
+  "angles_deg": {
+    "left": 49.16391039252694,
+    "right": 50.809879203207316,
+    "mean": 49.98689479786712
+  },
+  "distinct_fit_particles": {
+    "left": 14,
+    "right": 17
+  },
+  "excluded_crest_particle_indices": {
+    "left": [
+      895,
+      769,
+      643
+    ],
+    "right": [
+      1879
+    ]
+  },
+  "sensitivity": {
+    "domain": "full supported face, lower cutoff zero; projected halfwidth .075m fixed",
+    "resolution": [
+      {
+        "step_factor": 0.125,
+        "left": 48.98716376902973,
+        "right": 50.66638324129462,
+        "mean": 49.82677350516217,
+        "support": [
+          15,
+          20
+        ]
+      },
+      {
+        "step_factor": 0.25,
+        "left": 49.16391039252694,
+        "right": 50.809879203207316,
+        "mean": 49.98689479786712,
+        "support": [
+          14,
+          17
+        ]
+      },
+      {
+        "step_factor": 0.5,
+        "left": 49.05584395977337,
+        "right": 50.76120924215455,
+        "mean": 49.90852660096396,
+        "support": [
+          13,
+          15
+        ]
+      }
+    ],
+    "resolution_mean_span": 0.16012129270495024,
+    "scale_checks": [
+      {
+        "scale": 0.1,
+        "mean": 49.98689479786712
+      },
+      {
+        "scale": 10.0,
+        "mean": 49.98689479786712
+      }
+    ]
+  },
+  "measurement_approved": false
+}

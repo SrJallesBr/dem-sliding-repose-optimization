@@ -1,32 +1,12 @@
-# Campaign outputs and derived evidence — never publish trial data by default
-calibration_runs_*/
-preview_trial_*/
-trial_*/
-**/trial_*/
-*.vtk
-*.dump
-*.restart
-*.restart.*
-*.log
-status_execucao.csv
-results.csv
-resultados.csv
-*.csv
-*.jsonl
-
-# Python/build artifacts
 __pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.coverage
-
-# Local-only historical/candidate metadata with machine paths
-ANGLE_MEASUREMENT_V6.json
-PACKAGE_MANIFEST.json
-
-# Editor / OS noise
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
+*.pyc
+calibration_runs*/
+verification_*/
+post/
+log.*
+*.log
+screen.*
+restart*
+*.data
+core
+core.*

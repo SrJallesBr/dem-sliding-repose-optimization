@@ -636,9 +636,10 @@ class CalibrationController:
         self._record_status(**base, status="running", stage="prepare", message="workspace created", finished_at="")
         try:
             self._run_input(workspace, "Ang Deslizamento", "in.deslizamento", "discharge")
+            # Independent cases: preserve both snapshots before post-processing.
+            self._run_input(workspace, "Ang Repouso", "in.repouso", "repose")
             discharge_measurement = self._measure_snapshot(workspace / "Ang Deslizamento/post/deslizamento_final.vtk", "discharge")
             v_angle = discharge_measurement["mean_angle_deg"]
-            self._run_input(workspace, "Ang Repouso", "in.repouso", "repose")
             repose_measurement = self._measure_snapshot(workspace / "Ang Repouso/post/repouso_10s.vtk", "repose")
             repose_angle = repose_measurement["mean_angle_deg"]
             repose_cut_results = repose_pair_result_fields(repose_measurement)
@@ -811,6 +812,9 @@ class CalibrationController:
                     maximum_trial_id = max(maximum_trial_id, int(row["trial_id"]))
         return completed, rejected_counts, maximum_trial_id + 1
 
+    def refresh_live_state(self, run_root: Path, active: dict[int, dict]) -> None:
+        refresh_live_state(run_root, active)
+
     def _run_points(self, points: list[dict], phase: str, first_trial_id: int, initial_retries: dict | None = None) -> list[dict]:
         workers = min(len(points), int(self.config.get("parallel_trials", 1)))
         if workers < 1:
@@ -837,7 +841,7 @@ class CalibrationController:
                 except StopIteration:
                     break
             while pending:
-                refresh_live_state(self.run_root, active)
+                self.refresh_live_state(self.run_root, active)
                 write_live_status_csv(self.run_root, active)
                 render_dashboard(active, first_trial_id - 1 + len(results), maximum, interval=dashboard_interval)
                 completed, _ = wait(pending, timeout=dashboard_interval, return_when=FIRST_COMPLETED)
@@ -884,7 +888,7 @@ class CalibrationController:
                         submit(next(point_iterator))
                     except StopIteration:
                         continue
-            refresh_live_state(self.run_root, active)
+            self.refresh_live_state(self.run_root, active)
             write_live_status_csv(self.run_root, active)
             render_dashboard(active, first_trial_id - 1 + len(results), maximum, interval=dashboard_interval)
         self._next_trial_id = next_trial_id
@@ -1074,4 +1078,7 @@ def main(argv=None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # This project uses the supplied sequential opening protocol. The class
+    # above remains a tested compatibility/scheduler base, not the CLI entry.
+    from optimizer.opening_controller import main as opening_main
+    sys.exit(opening_main())

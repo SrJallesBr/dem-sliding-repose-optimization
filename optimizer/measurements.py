@@ -494,7 +494,16 @@ def measure_repose_eight_ray_least_squares(
                 "downweighted_particle_points": projected_downweighted,
                 "outlier_points": [],
                 "r2": float(fitted["r2"]),
-                "fit_quality_warning": fitted["r2"] < 0.90,
+                "r2_role": "diagnostic_y_on_horizontal_not_acceptance_gate",
+                "orthogonal_rms_radii": fitted["orthogonal_rms_radii"],
+                "orthogonal_quality": fitted["orthogonal_quality"],
+                "fitted_horizontal_span_radii": fitted["fitted_horizontal_span_radii"],
+                "vertical_span_radii": fitted["vertical_span_radii"],
+                "departure_runs": fitted["departure_runs"],
+                "fit_sample_weights": fitted["fit_sample_weights"],
+                "excluded_sample_semantics": fitted["excluded_sample_semantics"],
+                "validity_policy": fitted["validity_policy"],
+                "fit_quality_warning": not fitted["valid"],
                 "fit_support": len(retained_points),
                 "candidate_count": int(measured[f"{side}_candidate_count"]),
                 "downweighted_count": len(downweighted_surface),
@@ -535,7 +544,7 @@ def measure_repose_eight_ray_least_squares(
         "profile_method": "repose_horizontal_surface_consensus",
         "outlier_tolerance_radii": outlier_tolerance_radii,
         "fit_weighting": "physical_height_trapezoidal_cells",
-        "validity_policy": {"minimum_inlier_r2":0.90,"minimum_unique_particles":5,"maximum_unsupported_gap_diameters":2.0,"minimum_fit_samples":min_points_per_ray},
+        "validity_policy": {**direction_profiles[0]["validity_policy"], "minimum_fit_samples": min_points_per_ray},
         "repose_axis_reference": "section_external_vertical",
         "height_sampling_method": "sphere_plane_horizontal_intersection",
         "height_band_factor": height_band_factor,
@@ -567,7 +576,7 @@ def measure_repose_eight_ray_least_squares(
     return result
 
 
-def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis, mesh_bounds=None, section_half_width=0.1, section_center=None, section_normal_bounds_sim=None, max_horizontal_jump_radii=5.0, min_fit_points=5, min_r2=0.90, profile_selection="nearest_centerline", height_band_factor=2.0, minimum_height_particle_diameters=0.0):
+def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis, mesh_bounds=None, section_half_width=0.1, section_center=None, section_normal_bounds_sim=None, max_horizontal_jump_radii=5.0, min_fit_points=5, min_r2=0.90, profile_selection="nearest_centerline", height_band_factor=2.0, minimum_height_particle_diameters=0.0, exposed_surface="outer", reference_radius=None):
     """Trace two faces by diameter-height bands and fit all selected samples from base to top.
 
     ``nearest_centerline`` is the V-test selector; ``outer_envelope`` selects the exposed pile boundary for repose. Both share the same individual-radius surface correction, base anchor, Huber fit, and geometry checks.
@@ -616,7 +625,11 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
     ]
     if len(section) < 2 * min_fit_points:
         raise ValueError("insufficient particles in the central vertical section")
-    median_radius = statistics.median(radius for _, _, radius in section)
+    median_radius = statistics.median(radius for _, _, radius in section) if reference_radius is None else float(reference_radius)
+    if not math.isfinite(median_radius) or median_radius <= 0:
+        raise ValueError("reference radius must be finite and positive")
+    if exposed_surface not in {"outer", "inner"}:
+        raise ValueError("exposed_surface must be outer or inner")
     band_height = float(height_band_factor) * median_radius
     if median_radius <= 0 or band_height <= 0:
         raise ValueError("invalid particle-diameter height band")
@@ -655,7 +668,7 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
         # shallow but continuous faces can exceed this radius-scaled value.
         # Candidate outliers are screened by the robust residual and band-run test.
         kept = candidates
-        surface_sign = -1.0 if side_name == "left" else 1.0
+        surface_sign = (-1.0 if side_name == "left" else 1.0) * (-1.0 if exposed_surface == "inner" else 1.0)
         # If the lowest band contains competing particles, use the robust trend
         # above it to avoid anchoring the face to a lone near-center particle.
         if len(candidates) >= min_fit_points + 1 and len(candidate_groups[0][1]) > 1:
@@ -694,7 +707,7 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
                 )
                 if error <= 2.75 * median_radius:
                     candidates[0] = (base_band, replacement)
-        surface_sign = -1.0 if side_name == "left" else 1.0
+        surface_sign = (-1.0 if side_name == "left" else 1.0) * (-1.0 if exposed_surface == "inner" else 1.0)
         if profile_selection == "base_edge_nearest":
             basal_reference_band, basal_reference = candidates[0]
             base_edge_axis = basal_reference[0]
@@ -753,23 +766,52 @@ def measure_v_sliding_angle_by_height(points, particle_radii, *, horizontal_axis
             statistics.median(outward[max(0, index - 1):min(len(outward), index + 2)])
             for index in range(len(outward))
         ]
-        # Detect the strongest sustained sign reversal in the smoothed profile.
-        # Detect a sustained reversal from the selected profile itself. A
-        # three-band median can erase short-but-supported reversals and turn a
-        # bridge-like profile into a plausible-looking one-piece angle.
+        # Locate an actual extremum, not the last 2-of-3 sign-count window.
+        # Require net directional support on both sides and prominence of one
+        # particle diameter over the whole lobe. Local roughness is left to
+        # Huber; a shallow but sustained return must not disappear merely
+        # because its three-edge displacement is small. Keep raw samples so
+        # median smoothing cannot erase short genuine returns.
         deltas = [b - a for a, b in zip(outward, outward[1:])]
         reversal_candidates = []
-        for turn in range(2, len(smoothed) - 2):
-            before, after = deltas[:turn], deltas[turn:]
-            rising_before = [value for value in before[-3:] if value > 0]
-            falling_before = [value for value in before[-3:] if value < 0]
-            rising_after = [value for value in after[:3] if value > 0]
-            falling_after = [value for value in after[:3] if value < 0]
-            if len(rising_before) >= 2 and len(falling_after) >= 2:
-                reversal_candidates.append((min(sum(rising_before), -sum(falling_after)), turn))
-            if len(falling_before) >= 2 and len(rising_after) >= 2:
-                reversal_candidates.append((min(-sum(falling_before), sum(rising_after)), turn))
-        split_at = max(reversal_candidates, default=(0.0, None))[1] if profile_selection == "nearest_centerline" else None
+        for turn in range(2, len(outward) - 2):
+            before = [value for value in deltas[:turn] if abs(value) > 1e-9 * median_radius][-3:]
+            after = [value for value in deltas[turn:] if abs(value) > 1e-9 * median_radius][:3]
+            net_before, net_after = sum(before), sum(after)
+            peak_prominence = min(outward[turn] - min(outward[:turn]), outward[turn] - min(outward[turn + 1:]))
+            trough_prominence = min(max(outward[:turn]) - outward[turn], max(outward[turn + 1:]) - outward[turn])
+            if (before and before[-1] > 0 and deltas[turn] < -1e-9 * median_radius
+                    and sum(value > 0 for value in before) >= 2
+                    and sum(value < 0 for value in after) >= 2
+                    and net_before > 0 > net_after
+                    and peak_prominence >= 2.0 * median_radius):
+                reversal_candidates.append((peak_prominence, turn + 1))
+            if (before and before[-1] < 0 and deltas[turn] > 1e-9 * median_radius
+                    and sum(value < 0 for value in before) >= 2
+                    and sum(value > 0 for value in after) >= 2
+                    and net_before < 0 < net_after
+                    and trough_prominence >= 2.0 * median_radius):
+                reversal_candidates.append((trough_prominence, turn + 1))
+        # The SAME extremum may belong to either disjoint piece. Prefer the
+        # established lower-piece ownership, but allow it to anchor the upper
+        # piece when that alone restores minimum support (e.g. 20/4 -> 19/5).
+        # This neither moves the physical turn nor duplicates a fit sample.
+        reversal_candidates = [
+            (strength, split - 1 if (
+                min(split, len(surface_kept) - split) < min_fit_points
+                and min(split - 1, len(surface_kept) - split + 1) >= min_fit_points
+            ) else split)
+            for strength, split in reversal_candidates
+        ]
+        # Prefer supported placement only for equally prominent extrema; never
+        # hide a stronger true unsupported reversal behind a weaker supported
+        # one or silently replace it by one line.
+        strongest_turn = max(
+            reversal_candidates,
+            key=lambda item: (item[0], min(item[1], len(surface_kept) - item[1]) >= min_fit_points, -item[1]),
+            default=(0.0, None),
+        )
+        split_at = strongest_turn[1] if profile_selection == "nearest_centerline" else None
         piece_samples = [surface_kept] if split_at is None else [surface_kept[:split_at], surface_kept[split_at:]]
         if split_at is not None and any(len(piece) < min_fit_points for piece in piece_samples):
             raise UnmeasurableAngle(f"insufficient segment support on {side_name} pile face for two-piece fit")
